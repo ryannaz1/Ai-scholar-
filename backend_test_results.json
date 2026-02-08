@@ -1,0 +1,128 @@
+{
+  "total_tests": 20,
+  "passed_tests": 20,
+  "failed_tests": 0,
+  "success_rate": 100.0,
+  "test_results": [
+    {
+      "test": "Root API Endpoint",
+      "success": true,
+      "details": "Status: 200, Expected: 200",
+      "timestamp": "2026-02-08T10:54:22.848450"
+    },
+    {
+      "test": "Pricing Info",
+      "success": true,
+      "details": "Status: 200, Expected: 200",
+      "timestamp": "2026-02-08T10:54:23.293314"
+    },
+    {
+      "test": "Pricing Values Correct",
+      "success": true,
+      "details": "All pricing values correct",
+      "timestamp": "2026-02-08T10:54:23.293979"
+    },
+    {
+      "test": "Pricing Calculation (1000 words)",
+      "success": true,
+      "details": "Status: 200, Expected: 200",
+      "timestamp": "2026-02-08T10:54:23.743261"
+    },
+    {
+      "test": "Pricing Calculation (15000 words)",
+      "success": true,
+      "details": "Status: 200, Expected: 200",
+      "timestamp": "2026-02-08T10:54:24.192197"
+    },
+    {
+      "test": "Pricing Calculations Correct",
+      "success": true,
+      "details": "1000w: {'word_count': 1000, 'base_price': 25.0, 'discount_percent': 0.0, 'discount_amount': 0.0, 'final_price': 25.0, 'pages': 3.57}, 15000w: {'word_count': 15000, 'base_price': 375.0, 'discount_percent': 10.0, 'discount_amount': 37.5, 'final_price': 337.5, 'pages': 53.57}",
+      "timestamp": "2026-02-08T10:54:24.192845"
+    },
+    {
+      "test": "User Registration",
+      "success": true,
+      "details": "Status: 200, Expected: 200",
+      "timestamp": "2026-02-08T10:54:24.875165"
+    },
+    {
+      "test": "Registration Token Received",
+      "success": true,
+      "details": "User ID: 0499b197-2b90-41d1-b15e-54467d19cf61",
+      "timestamp": "2026-02-08T10:54:24.875797"
+    },
+    {
+      "test": "Get Current User",
+      "success": true,
+      "details": "Status: 200, Expected: 200",
+      "timestamp": "2026-02-08T10:54:25.327668"
+    },
+    {
+      "test": "User Data Structure",
+      "success": true,
+      "details": "All required fields present",
+      "timestamp": "2026-02-08T10:54:25.328332"
+    },
+    {
+      "test": "Assignment Creation",
+      "success": true,
+      "details": "Status: 200, Expected: 200",
+      "timestamp": "2026-02-08T10:54:25.789334"
+    },
+    {
+      "test": "Assignment Pricing Correct",
+      "success": true,
+      "details": "Expected: ~50.00, Actual: 50.0",
+      "timestamp": "2026-02-08T10:54:25.789983"
+    },
+    {
+      "test": "Get Assignment by ID",
+      "success": true,
+      "details": "Status: 200, Expected: 200",
+      "timestamp": "2026-02-08T10:54:26.240249"
+    },
+    {
+      "test": "Assignment Data Structure",
+      "success": true,
+      "details": "All required fields present",
+      "timestamp": "2026-02-08T10:54:26.240902"
+    },
+    {
+      "test": "Create Payment Checkout",
+      "success": true,
+      "details": "Status: 200, Expected: 200",
+      "timestamp": "2026-02-08T10:54:27.771018"
+    },
+    {
+      "test": "Checkout Response Structure",
+      "success": true,
+      "details": "Stripe checkout URL and session ID received",
+      "timestamp": "2026-02-08T10:54:27.772095"
+    },
+    {
+      "test": "Get Assignments List",
+      "success": true,
+      "details": "Status: 200, Expected: 200",
+      "timestamp": "2026-02-08T10:54:28.151247"
+    },
+    {
+      "test": "Assignments List Format",
+      "success": true,
+      "details": "Found 1 assignments",
+      "timestamp": "2026-02-08T10:54:28.151872"
+    },
+    {
+      "test": "Dashboard Statistics",
+      "success": true,
+      "details": "Status: 200, Expected: 200",
+      "timestamp": "2026-02-08T10:54:28.914831"
+    },
+    {
+      "test": "Dashboard Stats Structure",
+      "success": true,
+      "details": "All required fields present",
+      "timestamp": "2026-02-08T10:54:28.915579"
+    }
+  ]
+}
