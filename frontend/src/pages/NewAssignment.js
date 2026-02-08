@@ -55,8 +55,15 @@ const NewAssignment = () => {
   };
 
   const handleWordCountChange = (e) => {
-    const value = Math.max(280, Math.min(50000, parseInt(e.target.value) || 280));
-    setFormData(prev => ({ ...prev, word_count: value }));
+    const rawValue = e.target.value;
+    // Allow empty value during typing
+    if (rawValue === '') {
+      setFormData(prev => ({ ...prev, word_count: 280 }));
+      return;
+    }
+    const value = parseInt(rawValue) || 280;
+    const clampedValue = Math.max(280, Math.min(50000, value));
+    setFormData(prev => ({ ...prev, word_count: clampedValue }));
   };
 
   const handleFileUpload = async (e) => {
