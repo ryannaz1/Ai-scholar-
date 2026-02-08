@@ -1,0 +1,139 @@
+{
+  "design_system": {
+    "identity": {
+      "name": "Scholar",
+      "archetype": "The Modern Scriptorium",
+      "vibe": "Intellectual, Focused, Organic, Trustworthy",
+      "core_philosophy": "Digital tools with the soul of a library. Technology that respects the writing process."
+    },
+    "typography": {
+      "headings": {
+        "family": "Fraunces, serif",
+        "weights": ["300", "600", "800"],
+        "usage": "Use for all H1-H3. Enable font-feature-settings for 'soft' styling if available.",
+        "letter_spacing": "tracking-tight"
+      },
+      "body": {
+        "family": "Inter, sans-serif",
+        "weights": ["400", "500"],
+        "usage": "Use for all UI text, paragraphs, and inputs.",
+        "letter_spacing": "tracking-normal"
+      },
+      "mono": {
+        "family": "JetBrains Mono, monospace",
+        "usage": "Use for code snippets, word counts, and pricing figures."
+      }
+    },
+    "colors": {
+      "palette": {
+        "background": {
+          "default": "#FDFCF8",
+          "paper": "#F2F0E9",
+          "dark": "#1A1A1A"
+        },
+        "foreground": {
+          "default": "#1A1A1A",
+          "muted": "#5C5C5C",
+          "inverse": "#FDFCF8"
+        },
+        "primary": {
+          "default": "#2E4057",
+          "hover": "#1F2D3D",
+          "foreground": "#FFFFFF"
+        },
+        "accent": {
+          "default": "#E07A5F",
+          "hover": "#D06348",
+          "foreground": "#FFFFFF"
+        },
+        "border": {
+          "default": "#E5E5E5",
+          "active": "#2E4057"
+        }
+      },
+      "gradients": {
+        "hero": "linear-gradient(135deg, #FDFCF8 0%, #F2F0E9 100%)",
+        "ai_magic": "linear-gradient(90deg, #2E4057 0%, #4A6FA5 100%)"
+      }
+    },
+    "spacing": {
+      "scale": "Tailwind default but doubled for layout containers (e.g., p-8, p-16, p-24).",
+      "container_padding": "px-6 md:px-12 lg:px-24",
+      "section_gap": "gap-16 md:gap-32"
+    },
+    "visual_enhancers": {
+      "radius": "rounded-sm",
+      "shadows": {
+        "card": "0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03)",
+        "float": "0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)"
+      },
+      "textures": {
+        "noise": "url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0IiBoZWlnaHQ9IjQiPgo8cmVjdCB3aWR0aD0iNCIgaGVpZ2h0PSI0IiBmaWxsPSIjZmZmIi8+CjxyZWN0IHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9IiNjY2MiLz4KPC9zdmc+')",
+        "paper": "Use the paper texture image for the writing area background."
+      }
+    },
+    "layout_strategies": {
+      "marketing": "Bento Grid (Mode A). Asymmetric, large typography, generous whitespace.",
+      "dashboard": "High Density Grid (Mode B). Sidebar navigation, clean content area, minimal distractions.",
+      "writing_interface": "Zen Mode. Centered column, max-width-3xl, hidden chrome on focus."
+    }
+  },
+  "components": {
+    "buttons": {
+      "primary": "bg-primary text-primary-foreground hover:bg-primary/90 rounded-sm px-8 py-3 font-medium transition-all hover:-translate-y-0.5 shadow-sm",
+      "secondary": "bg-transparent border border-primary text-primary hover:bg-primary/5 rounded-sm px-8 py-3 font-medium transition-all",
+      "ghost": "hover:bg-accent/10 text-accent hover:text-accent-foreground rounded-sm px-4 py-2 transition-colors"
+    },
+    "cards": {
+      "feature": "bg-white border border-border/40 p-8 rounded-sm hover:border-primary/20 transition-colors",
+      "pricing": "relative overflow-hidden border border-border p-8 rounded-sm bg-white hover:shadow-float transition-shadow"
+    },
+    "inputs": {
+      "default": "bg-transparent border-b border-border focus:border-primary focus:ring-0 rounded-none px-0 py-3 transition-colors placeholder:text-muted-foreground/50"
+    }
+  },
+  "assets": {
+    "images": {
+      "hero_background": {
+        "url": "https://images.unsplash.com/photo-1741699427799-3fbb70fce948?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA2OTV8MHwxfHNlYXJjaHwxfHxzdHVkZW50JTIwd3JpdGluZyUyMG9uJTIwbGFwdG9wJTIwaW4lMjBsaWJyYXJ5fGVufDB8fHx8MTc3MDU0NzQ4OHww&ixlib=rb-4.1.0&q=85",
+        "alt": "Student studying in a grand library",
+        "usage": "Hero section background with overlay or side image."
+      },
+      "texture_paper": {
+        "url": "https://images.unsplash.com/photo-1737276746515-19ea864a6b80?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA3MDB8MHwxfHNlYXJjaHwyfHxtaW5pbWFsaXN0JTIwYWJzdHJhY3QlMjBwYXBlciUyMHRleHR1cmUlMjBiYWNrZ3JvdW5kfGVufDB8fHx8MTc3MDU0NzQ3M3ww&ixlib=rb-4.1.0&q=85",
+        "alt": "Subtle paper texture",
+        "usage": "Background for the writing interface/editor."
+      }
+    },
+    "icons": {
+      "library": "lucide-react",
+      "usage": "Use thin strokes (stroke-width={1.5}) for a refined look."
+    }
+  },
+  "instructions_to_main_agent": {
+    "general": [
+      "Implement the 'Organic Swiss' theme: strict grids but warm colors.",
+      "Use the 'Fraunces' font for all headings. Import it from Google Fonts.",
+      "Ensure the writing interface feels like a premium text editor, not a form.",
+      "Use the paper texture background for the main writing area to reduce eye strain.",
+      "For the pricing page, highlight the 'Student' tier with a subtle 'Tracing Beam' effect."
+    ],
+    "pages": {
+      "landing": "Hero section must use the library image. Focus on 'Academic Integrity' and 'Improvement'.",
+      "dashboard": "Clean, sidebar layout. Show 'Recent Assignments' and 'Usage Stats' in a bento grid.",
+      "editor": "Minimalist. Toolbar on top or floating. Focus on the text.",
+      "pricing": "Simple 3-column layout. Free, Pay-per-page, Subscription."
+    },
+    "accessibility": [
+      "Ensure text contrast is at least 4.5:1.",
+      "All interactive elements must have :focus-visible styles.",
+      "Support 'prefers-reduced-motion'."
+    ]
+  },
+  "universal_guidelines": [
+    "Do not use generic gradients.",
+    "Avoid 'AI slop' aesthetics (shiny, neon, dark mode only).",
+    "Use 'sonner' for toasts.",
+    "Add data-testid to all interactive elements."
+  ]
+}
