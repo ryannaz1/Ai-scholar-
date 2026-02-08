@@ -1,34 +1,138 @@
-.App-logo {
-    height: 40vmin;
-    pointer-events: none;
+/* Scholar Academic Writing Assistant */
+
+/* Animation keyframes */
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
-@media (prefers-reduced-motion: no-preference) {
-    .App-logo {
-        animation: App-logo-spin infinite 20s linear;
-    }
+.animate-spin {
+  animation: spin 1s linear infinite;
 }
 
-.App-header {
-    background-color: #0f0f10;
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    font-size: calc(10px + 2vmin);
-    color: white;
+/* Paper texture */
+.bg-paper {
+  background-color: #FDFCF8;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='4' height='4' viewBox='0 0 4 4'%3E%3Cpath fill='%23ddd' fill-opacity='0.15' d='M1 3h1v1H1V3zm2-2h1v1H3V1z'%3E%3C/path%3E%3C/svg%3E");
 }
 
-.App-link {
-    color: #61dafb;
+/* Writing area styling */
+.writing-area {
+  min-height: 400px;
+  padding: 2rem;
+  background-color: #FDFCF8;
+  background-image: 
+    linear-gradient(#e5e5e5 1px, transparent 1px);
+  background-size: 100% 2rem;
+  background-position-y: 1.5rem;
+  line-height: 2rem;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 2px;
 }
 
-@keyframes App-logo-spin {
-    from {
-        transform: rotate(0deg);
-    }
-    to {
-        transform: rotate(360deg);
-    }
+/* Prose styling for generated content */
+.prose p {
+  margin-bottom: 1rem;
+  line-height: 1.75;
+}
+
+.prose h1, .prose h2, .prose h3 {
+  font-family: 'Fraunces', serif;
+  font-weight: 600;
+  margin-top: 1.5rem;
+  margin-bottom: 0.75rem;
+}
+
+/* Custom range slider */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 8px;
+  background: #E5E5E5;
+  border-radius: 4px;
+  outline: none;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  background: #2E4057;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: transform 0.15s ease;
+}
+
+input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.1);
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  background: #2E4057;
+  border-radius: 50%;
+  cursor: pointer;
+  border: none;
+}
+
+/* Hero gradient */
+.hero-gradient {
+  background: linear-gradient(135deg, #FDFCF8 0%, #F2F0E9 100%);
+}
+
+/* Transitions */
+.transition-lift {
+  transition: all 0.2s ease;
+}
+
+.transition-lift:hover {
+  transform: translateY(-2px);
+}
+
+/* Status badges */
+.status-draft {
+  background-color: #F3F4F6;
+  color: #6B7280;
+}
+
+.status-paid {
+  background-color: #DBEAFE;
+  color: #1E40AF;
+}
+
+.status-completed {
+  background-color: #D1FAE5;
+  color: #065F46;
+}
+
+/* Focus visible */
+:focus-visible {
+  outline: 2px solid #2E4057;
+  outline-offset: 2px;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #F2F0E9;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #C4C4C4;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #A0A0A0;
 }
