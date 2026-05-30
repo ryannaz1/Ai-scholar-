@@ -1,5 +1,7 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, UploadFile, File, Request, Body
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, UploadFile, File, Request, Body, BackgroundTasks
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+import json
+import re
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -91,6 +93,11 @@ class AssignmentResponse(BaseModel):
     discount_applied: bool
     final_price: float
     generated_content: Optional[str] = None
+    outline: Optional[str] = None
+    draft: Optional[str] = None
+    writing_tips: Optional[str] = None
+    generation_status: Optional[str] = "pending"  # pending | generating | completed | failed
+    generation_error: Optional[str] = None
     course_materials: List[str] = []
     created_at: str
     updated_at: str
@@ -284,6 +291,11 @@ async def create_assignment(data: AssignmentCreate, user: dict = Depends(get_cur
         "discount_applied": pricing.discount_percent > 0,
         "final_price": pricing.final_price,
         "generated_content": None,
+        "outline": None,
+        "draft": None,
+        "writing_tips": None,
+        "generation_status": "pending",
+        "generation_error": None,
         "course_materials": [],
         "created_at": now,
         "updated_at": now
@@ -361,89 +373,166 @@ async def upload_course_material(
 
 # ==================== AI GENERATION ROUTES ====================
 
-@api_router.post("/assignments/{assignment_id}/generate")
-async def generate_content(assignment_id: str, user: dict = Depends(get_current_user)):
-    assignment = await db.assignments.find_one({"id": assignment_id, "user_id": user["id"]}, {"_id": 0})
-    if not assignment:
-        raise HTTPException(status_code=404, detail="Assignment not found")
-    
-    if assignment["status"] != "paid":
-        raise HTTPException(status_code=400, detail="Assignment must be paid before generation")
-    
-    # Get course materials
-    materials = await db.course_materials.find(
-        {"assignment_id": assignment_id},
-        {"_id": 0, "extracted_text": 1, "filename": 1}
-    ).to_list(10)
-    
-    materials_context = "\n\n".join([
-        f"--- {m['filename']} ---\n{m['extracted_text'][:10000]}"
-        for m in materials
-    ])
-    
-    # Build prompt
-    system_message = """You are an expert academic writing assistant. Your role is to help students learn and improve their writing skills by providing:
-1. Well-structured outlines and drafts
-2. Clear explanations of concepts
-3. Proper academic formatting and citations guidance
-4. Writing that serves as a learning template
+ETHICAL_SYSTEM_MESSAGE = """You are Scholar, an ethical academic writing assistant designed to help students LEARN and IMPROVE their writing skills. You do not write final submission-ready work for students to pass off as their own. Instead, you produce educational scaffolding that teaches them how to approach their assignment.
 
-Create content that helps students understand how to approach academic writing. The content should be educational and serve as a guide for the student's own learning.
+For every assignment, you produce THREE distinct sections:
 
-Important: Generate content that is approximately the requested word count. Use proper academic language, include section headings, and maintain a scholarly tone."""
+1. OUTLINE — A detailed, hierarchical outline (sections, sub-sections, key points, suggested arguments, evidence to look for). This is the structural blueprint.
 
-    user_prompt = f"""Assignment Details:
+2. DRAFT — A reference draft written at approximately the requested word count. It demonstrates the structure, tone, evidence use, and academic register the student should aim for. It is explicitly framed as a learning template, NOT a final submission. Use clear section headings and proper academic prose.
+
+3. WRITING_TIPS — Concrete, actionable feedback and learning tips: how to research further, how to refine arguments, common mistakes to avoid, citation guidance, paraphrasing strategy, and specific suggestions to make the draft personal to the student's voice and original analysis.
+
+OUTPUT FORMAT (CRITICAL): Return ONLY a valid JSON object — no markdown fences, no explanations — with exactly these three string keys: "outline", "draft", "writing_tips". Each value must be plain text using \\n for line breaks. Example:
+{"outline": "...", "draft": "...", "writing_tips": "..."}"""
+
+
+def _parse_ai_json(raw: str) -> dict:
+    """Robustly extract the JSON object from the model response."""
+    if not raw:
+        return {}
+    # Strip markdown code fences if present
+    cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip(), flags=re.MULTILINE)
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        # Try to find first { ... last }
+        start = cleaned.find("{")
+        end = cleaned.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            try:
+                return json.loads(cleaned[start:end + 1])
+            except json.JSONDecodeError:
+                pass
+        return {}
+
+
+async def run_generation(assignment_id: str):
+    """Background task: generate outline + draft + writing tips for a paid assignment."""
+    try:
+        assignment = await db.assignments.find_one({"id": assignment_id}, {"_id": 0})
+        if not assignment:
+            logger.error(f"Generation: assignment {assignment_id} not found")
+            return
+
+        await db.assignments.update_one(
+            {"id": assignment_id},
+            {"$set": {
+                "generation_status": "generating",
+                "generation_error": None,
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            }}
+        )
+
+        materials = await db.course_materials.find(
+            {"assignment_id": assignment_id},
+            {"_id": 0, "extracted_text": 1, "filename": 1}
+        ).to_list(10)
+
+        materials_context = "\n\n".join([
+            f"--- {m['filename']} ---\n{m['extracted_text'][:8000]}"
+            for m in materials
+        ])
+
+        user_prompt = f"""Assignment Details:
 Title: {assignment['title']}
 Subject: {assignment['subject']}
 Requirements: {assignment['requirements']}
-Word Count Target: {assignment['word_count']} words
+Word Count Target: {assignment['word_count']} words (this applies to the DRAFT section only)
 Writing Style: {assignment['writing_style']}
-Additional Notes: {assignment['additional_notes']}
+Additional Notes: {assignment.get('additional_notes', '')}
 
 {"Course Materials Context:" if materials_context else ""}
 {materials_context[:15000] if materials_context else "No additional materials provided."}
 
-Please generate a comprehensive academic writing sample that:
-1. Follows the requirements exactly
-2. Is approximately {assignment['word_count']} words
-3. Includes proper structure (introduction, body, conclusion)
-4. Uses academic language appropriate for the subject
-5. Provides educational value to help the student learn"""
+Produce the JSON object with the three required keys (outline, draft, writing_tips).
+The DRAFT must be approximately {assignment['word_count']} words and demonstrate scholarly structure.
+Remember: this is a LEARNING REFERENCE, not a final submission. Encourage the student's own voice in writing_tips."""
 
-    try:
         from emergentintegrations.llm.chat import LlmChat, UserMessage
-        
+
         api_key = os.environ.get('EMERGENT_LLM_KEY')
         chat = LlmChat(
             api_key=api_key,
             session_id=f"assignment-{assignment_id}",
-            system_message=system_message
+            system_message=ETHICAL_SYSTEM_MESSAGE
         ).with_model("openai", "gpt-5.2")
-        
-        user_message = UserMessage(text=user_prompt)
-        generated_content = await chat.send_message(user_message)
-        
-        # Update assignment
+
+        response = await chat.send_message(UserMessage(text=user_prompt))
+        parsed = _parse_ai_json(response)
+
+        outline = parsed.get("outline", "").strip()
+        draft = parsed.get("draft", "").strip()
+        writing_tips = parsed.get("writing_tips", "").strip()
+
+        if not (outline or draft or writing_tips):
+            # Fallback: store raw response in draft so user still gets value
+            draft = response or ""
+
+        combined = f"# Outline\n\n{outline}\n\n# Draft\n\n{draft}\n\n# Writing Tips\n\n{writing_tips}"
+
         await db.assignments.update_one(
             {"id": assignment_id},
-            {
-                "$set": {
-                    "generated_content": generated_content,
-                    "status": "completed",
-                    "updated_at": datetime.now(timezone.utc).isoformat()
-                }
-            }
+            {"$set": {
+                "outline": outline,
+                "draft": draft,
+                "writing_tips": writing_tips,
+                "generated_content": combined,
+                "status": "completed",
+                "generation_status": "completed",
+                "generation_error": None,
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            }}
         )
-        
-        return {
-            "status": "success",
-            "content": generated_content,
-            "word_count": len(generated_content.split())
-        }
-        
+        logger.info(f"Generation complete for assignment {assignment_id}")
+
     except Exception as e:
-        logger.error(f"AI generation error: {e}")
-        raise HTTPException(status_code=500, detail=f"Content generation failed: {str(e)}")
+        logger.exception(f"Generation failed for {assignment_id}: {e}")
+        await db.assignments.update_one(
+            {"id": assignment_id},
+            {"$set": {
+                "generation_status": "failed",
+                "generation_error": str(e)[:500],
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            }}
+        )
+
+
+async def trigger_generation_if_needed(assignment_id: str, background_tasks: BackgroundTasks):
+    """Schedule generation if the assignment is paid and not already generating/completed."""
+    assignment = await db.assignments.find_one({"id": assignment_id}, {"_id": 0})
+    if not assignment:
+        return
+    gen_status = assignment.get("generation_status", "pending")
+    if assignment.get("status") in ("paid", "completed") and gen_status in ("pending", "failed"):
+        background_tasks.add_task(run_generation, assignment_id)
+
+
+@api_router.post("/assignments/{assignment_id}/generate")
+async def generate_content(
+    assignment_id: str,
+    background_tasks: BackgroundTasks,
+    user: dict = Depends(get_current_user)
+):
+    assignment = await db.assignments.find_one(
+        {"id": assignment_id, "user_id": user["id"]},
+        {"_id": 0}
+    )
+    if not assignment:
+        raise HTTPException(status_code=404, detail="Assignment not found")
+
+    if assignment["status"] not in ("paid", "completed"):
+        raise HTTPException(status_code=400, detail="Assignment must be paid before generation")
+
+    if assignment.get("generation_status") == "generating":
+        return {"status": "generating", "message": "Generation already in progress"}
+
+    background_tasks.add_task(run_generation, assignment_id)
+    await db.assignments.update_one(
+        {"id": assignment_id},
+        {"$set": {"generation_status": "generating", "generation_error": None}}
+    )
+    return {"status": "generating", "message": "Generation started"}
 
 # ==================== PAYMENT ROUTES ====================
 
@@ -506,7 +595,11 @@ async def create_checkout(data: CheckoutRequest, request: Request, user: dict = 
         raise HTTPException(status_code=500, detail=f"Checkout failed: {str(e)}")
 
 @api_router.get("/payments/status/{session_id}")
-async def get_payment_status(session_id: str, user: dict = Depends(get_current_user)):
+async def get_payment_status(
+    session_id: str,
+    background_tasks: BackgroundTasks,
+    user: dict = Depends(get_current_user)
+):
     try:
         from emergentintegrations.payments.stripe.checkout import StripeCheckout
         
@@ -525,18 +618,21 @@ async def get_payment_status(session_id: str, user: dict = Depends(get_current_u
                 {"$set": {"status": "completed", "payment_status": "paid"}}
             )
             
-            # Update assignment status
+            # Update assignment status and trigger generation
             if transaction.get("assignment_id"):
                 await db.assignments.update_one(
                     {"id": transaction["assignment_id"]},
                     {"$set": {"status": "paid", "updated_at": datetime.now(timezone.utc).isoformat()}}
                 )
+                await trigger_generation_if_needed(transaction["assignment_id"], background_tasks)
         
+        # Return assignment_id for frontend redirect convenience
         return {
             "status": status.status,
             "payment_status": status.payment_status,
             "amount_total": status.amount_total,
-            "currency": status.currency
+            "currency": status.currency,
+            "assignment_id": transaction.get("assignment_id") if transaction else None
         }
         
     except Exception as e:
@@ -544,7 +640,7 @@ async def get_payment_status(session_id: str, user: dict = Depends(get_current_u
         raise HTTPException(status_code=500, detail=f"Failed to get payment status: {str(e)}")
 
 @api_router.post("/webhook/stripe")
-async def stripe_webhook(request: Request):
+async def stripe_webhook(request: Request, background_tasks: BackgroundTasks):
     try:
         from emergentintegrations.payments.stripe.checkout import StripeCheckout
         
@@ -565,13 +661,14 @@ async def stripe_webhook(request: Request):
                 {"$set": {"status": "completed", "payment_status": "paid"}}
             )
             
-            # Update assignment
+            # Update assignment and trigger AI generation
             transaction = await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
             if transaction and transaction.get("assignment_id"):
                 await db.assignments.update_one(
                     {"id": transaction["assignment_id"]},
                     {"$set": {"status": "paid", "updated_at": datetime.now(timezone.utc).isoformat()}}
                 )
+                await trigger_generation_if_needed(transaction["assignment_id"], background_tasks)
         
         return {"status": "received"}
         

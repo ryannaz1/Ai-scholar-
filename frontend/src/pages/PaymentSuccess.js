@@ -25,27 +25,28 @@ const PaymentSuccess = () => {
   }, [sessionId]);
 
   const pollPaymentStatus = async (sid, attempts = 0) => {
-    const maxAttempts = 5;
+    const maxAttempts = 8;
     const pollInterval = 2000;
 
     if (attempts >= maxAttempts) {
       setStatus('error');
-      toast.error('Payment verification timed out. Please check your email for confirmation.');
+      toast.error('Payment verification timed out. Please check your dashboard.');
       return;
     }
 
     try {
       const res = await axios.get(`${API}/payments/status/${sid}`);
-      
+
       if (res.data.payment_status === 'paid') {
         setStatus('success');
-        // Get assignment ID from transaction
-        const assignmentsRes = await axios.get(`${API}/assignments`);
-        const paidAssignment = assignmentsRes.data.find(a => a.status === 'paid');
-        if (paidAssignment) {
-          setAssignmentId(paidAssignment.id);
+        if (res.data.assignment_id) {
+          setAssignmentId(res.data.assignment_id);
+          // Auto-redirect after a brief delay so user sees the success state
+          setTimeout(() => {
+            navigate(`/assignment/${res.data.assignment_id}`);
+          }, 1500);
         }
-        toast.success('Payment successful!');
+        toast.success('Payment successful! Generating your content...');
         return;
       }
 

@@ -1,32 +1,55 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
-import { 
-  BookOpen, ArrowLeft, CreditCard, Loader2, 
-  FileText, Download, Sparkles, CheckCircle, Clock,
-  Copy, AlertCircle
+import {
+  BookOpen, ArrowLeft, CreditCard, Loader2,
+  Download, Sparkles, CheckCircle, Clock,
+  Copy, AlertCircle, ListTree, FileText, Lightbulb, RefreshCw
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
-import { useAuth } from '../context/AuthContext';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs';
 import axios from 'axios';
 import { toast } from 'sonner';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 
+const SECTION_META = {
+  outline: { label: 'Outline', icon: ListTree, description: 'Structural blueprint of the assignment' },
+  draft: { label: 'Draft', icon: FileText, description: 'Reference draft at requested word count' },
+  writing_tips: { label: 'Writing Tips', icon: Lightbulb, description: 'Personalized guidance to make it your own' },
+};
+
 const AssignmentDetail = () => {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { user } = useAuth();
   const [assignment, setAssignment] = useState(null);
   const [loading, setLoading] = useState(true);
   const [paying, setPaying] = useState(false);
-  const [generating, setGenerating] = useState(false);
+  const [activeTab, setActiveTab] = useState('outline');
+  const pollTimerRef = useRef(null);
 
   useEffect(() => {
     fetchAssignment();
+    return () => {
+      if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+
+  // Auto-poll while generation is in progress
+  useEffect(() => {
+    if (!assignment) return;
+    const gs = assignment.generation_status;
+    if (gs === 'generating' || (assignment.status === 'paid' && gs === 'pending')) {
+      pollTimerRef.current = setTimeout(fetchAssignment, 4000);
+    }
+    return () => {
+      if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assignment?.generation_status, assignment?.status]);
 
   const fetchAssignment = async () => {
     try {
@@ -45,10 +68,8 @@ const AssignmentDetail = () => {
     try {
       const res = await axios.post(`${API}/payments/checkout`, {
         assignment_id: id,
-        origin_url: window.location.origin
+        origin_url: window.location.origin,
       });
-      
-      // Redirect to Stripe checkout
       window.location.href = res.data.url;
     } catch (error) {
       const message = error.response?.data?.detail || 'Payment failed';
@@ -58,52 +79,61 @@ const AssignmentDetail = () => {
   };
 
   const handleGenerate = async () => {
-    setGenerating(true);
     try {
-      const res = await axios.post(`${API}/assignments/${id}/generate`);
-      toast.success('Content generated successfully!');
-      await fetchAssignment();
+      await axios.post(`${API}/assignments/${id}/generate`);
+      toast.info('Generation started — this may take up to a minute.');
+      fetchAssignment();
     } catch (error) {
-      const message = error.response?.data?.detail || 'Generation failed';
+      const message = error.response?.data?.detail || 'Generation failed to start';
       toast.error(message);
-    } finally {
-      setGenerating(false);
     }
   };
 
-  const copyContent = () => {
-    if (assignment?.generated_content) {
-      navigator.clipboard.writeText(assignment.generated_content);
-      toast.success('Content copied to clipboard!');
-    }
+  const copySection = (text, label) => {
+    if (!text) return;
+    navigator.clipboard.writeText(text);
+    toast.success(`${label} copied to clipboard`);
   };
 
-  const downloadContent = () => {
-    if (assignment?.generated_content) {
-      const blob = new Blob([assignment.generated_content], { type: 'text/plain' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${assignment.title.replace(/[^a-z0-9]/gi, '_')}.txt`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      toast.success('Content downloaded!');
-    }
+  const downloadFull = () => {
+    if (!assignment?.generated_content) return;
+    const blob = new Blob([assignment.generated_content], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${assignment.title.replace(/[^a-z0-9]/gi, '_')}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast.success('Downloaded full document');
   };
 
-  const getStatusBadge = (status) => {
-    const statusConfig = {
-      draft: { label: 'Awaiting Payment', className: 'bg-yellow-100 text-yellow-800', icon: <Clock className="w-3 h-3" /> },
-      paid: { label: 'Ready to Generate', className: 'bg-blue-100 text-blue-800', icon: <Sparkles className="w-3 h-3" /> },
-      completed: { label: 'Completed', className: 'bg-green-100 text-green-800', icon: <CheckCircle className="w-3 h-3" /> }
+  const getStatusBadge = (status, genStatus) => {
+    if (genStatus === 'generating') {
+      return (
+        <Badge className="bg-purple-100 text-purple-800 flex items-center gap-1" data-testid="status-badge">
+          <Loader2 className="w-3 h-3 animate-spin" /> Generating
+        </Badge>
+      );
+    }
+    if (genStatus === 'failed') {
+      return (
+        <Badge className="bg-red-100 text-red-800 flex items-center gap-1" data-testid="status-badge">
+          <AlertCircle className="w-3 h-3" /> Generation Failed
+        </Badge>
+      );
+    }
+    const map = {
+      draft: { label: 'Awaiting Payment', className: 'bg-yellow-100 text-yellow-800', Icon: Clock },
+      paid: { label: 'Ready to Generate', className: 'bg-blue-100 text-blue-800', Icon: Sparkles },
+      completed: { label: 'Completed', className: 'bg-green-100 text-green-800', Icon: CheckCircle },
     };
-    const config = statusConfig[status] || statusConfig.draft;
+    const c = map[status] || map.draft;
+    const Icon = c.Icon;
     return (
-      <Badge className={`${config.className} flex items-center gap-1`}>
-        {config.icon}
-        {config.label}
+      <Badge className={`${c.className} flex items-center gap-1`} data-testid="status-badge">
+        <Icon className="w-3 h-3" /> {c.label}
       </Badge>
     );
   };
@@ -116,13 +146,14 @@ const AssignmentDetail = () => {
     );
   }
 
-  if (!assignment) {
-    return null;
-  }
+  if (!assignment) return null;
+
+  const isGenerating = assignment.generation_status === 'generating';
+  const isFailed = assignment.generation_status === 'failed';
+  const hasContent = assignment.outline || assignment.draft || assignment.writing_tips;
 
   return (
     <div className="min-h-screen bg-paper">
-      {/* Header */}
       <header className="border-b border-border/40 bg-white">
         <div className="max-w-5xl mx-auto px-6 py-4 flex items-center gap-4">
           <Link to="/dashboard" className="text-muted-foreground hover:text-foreground" data-testid="back-btn">
@@ -138,11 +169,11 @@ const AssignmentDetail = () => {
       <main className="max-w-5xl mx-auto px-6 py-8">
         <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4 mb-8">
           <div>
-            <div className="flex items-center gap-3 mb-2">
+            <div className="flex items-center gap-3 mb-2 flex-wrap">
               <h1 className="text-2xl md:text-3xl font-semibold text-foreground" style={{ fontFamily: 'Fraunces, serif' }}>
                 {assignment.title}
               </h1>
-              {getStatusBadge(assignment.status)}
+              {getStatusBadge(assignment.status, assignment.generation_status)}
             </div>
             <p className="text-muted-foreground">
               {assignment.subject} • {assignment.word_count.toLocaleString()} words
@@ -160,9 +191,8 @@ const AssignmentDetail = () => {
         </div>
 
         <div className="grid lg:grid-cols-3 gap-8">
-          {/* Main Content */}
+          {/* Main */}
           <div className="lg:col-span-2 space-y-6">
-            {/* Requirements Card */}
             <Card className="bg-white border border-border/40 rounded-sm" data-testid="requirements-card">
               <CardHeader>
                 <CardTitle className="text-lg" style={{ fontFamily: 'Fraunces, serif' }}>Requirements</CardTitle>
@@ -172,62 +202,120 @@ const AssignmentDetail = () => {
                 {assignment.additional_notes && (
                   <div className="mt-4 pt-4 border-t border-border/40">
                     <p className="text-sm font-medium mb-2">Additional Notes</p>
-                    <p className="text-sm text-muted-foreground">{assignment.additional_notes}</p>
+                    <p className="text-sm text-muted-foreground whitespace-pre-wrap">{assignment.additional_notes}</p>
                   </div>
                 )}
               </CardContent>
             </Card>
 
-            {/* Generated Content */}
-            {assignment.generated_content && (
-              <Card className="bg-white border border-border/40 rounded-sm" data-testid="content-card">
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <CardTitle className="text-lg" style={{ fontFamily: 'Fraunces, serif' }}>Generated Content</CardTitle>
-                    <div className="flex items-center gap-2">
-                      <Button 
-                        variant="outline" 
-                        size="sm" 
-                        onClick={copyContent}
-                        className="rounded-sm"
-                        data-testid="copy-btn"
-                      >
-                        <Copy className="w-4 h-4 mr-1" /> Copy
-                      </Button>
-                      <Button 
-                        variant="outline" 
-                        size="sm" 
-                        onClick={downloadContent}
-                        className="rounded-sm"
-                        data-testid="download-btn"
-                      >
-                        <Download className="w-4 h-4 mr-1" /> Download
-                      </Button>
+            {/* Generating state */}
+            {isGenerating && (
+              <Card className="bg-white border border-border/40 rounded-sm" data-testid="generating-card">
+                <CardContent className="p-8 text-center">
+                  <Loader2 className="w-10 h-10 text-primary mx-auto mb-4 animate-spin" />
+                  <h3 className="text-lg font-semibold mb-1" style={{ fontFamily: 'Fraunces, serif' }}>
+                    Crafting your learning materials…
+                  </h3>
+                  <p className="text-sm text-muted-foreground">
+                    This usually takes 20–60 seconds. We'll refresh automatically.
+                  </p>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Failed state */}
+            {isFailed && (
+              <Card className="bg-white border border-red-200 rounded-sm" data-testid="failed-card">
+                <CardContent className="p-6">
+                  <div className="flex items-start gap-3 mb-3">
+                    <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
+                    <div className="flex-1">
+                      <p className="font-medium text-red-800">Generation failed</p>
+                      <p className="text-sm text-red-700 mt-1 break-words">
+                        {assignment.generation_error || 'Something went wrong. Please retry.'}
+                      </p>
                     </div>
                   </div>
-                  <CardDescription>
-                    {assignment.generated_content.split(/\s+/).length.toLocaleString()} words generated
-                  </CardDescription>
+                  <Button onClick={handleGenerate} variant="outline" className="rounded-sm" data-testid="retry-btn">
+                    <RefreshCw className="w-4 h-4 mr-2" /> Retry generation
+                  </Button>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Tabbed content */}
+            {hasContent && !isGenerating && (
+              <Card className="bg-white border border-border/40 rounded-sm" data-testid="content-card">
+                <CardHeader>
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <CardTitle className="text-lg" style={{ fontFamily: 'Fraunces, serif' }}>
+                      Your Learning Materials
+                    </CardTitle>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={downloadFull}
+                      className="rounded-sm"
+                      data-testid="download-btn"
+                    >
+                      <Download className="w-4 h-4 mr-1" /> Download all
+                    </Button>
+                  </div>
                 </CardHeader>
                 <CardContent>
-                  <div className="writing-area prose prose-sm max-w-none" data-testid="generated-content">
-                    {assignment.generated_content.split('\n').map((paragraph, index) => (
-                      <p key={index} className="mb-4">{paragraph}</p>
-                    ))}
-                  </div>
+                  <Tabs value={activeTab} onValueChange={setActiveTab}>
+                    <TabsList className="grid grid-cols-3 w-full mb-4" data-testid="content-tabs">
+                      {Object.entries(SECTION_META).map(([key, meta]) => {
+                        const Icon = meta.icon;
+                        return (
+                          <TabsTrigger key={key} value={key} data-testid={`tab-${key}`}>
+                            <Icon className="w-4 h-4 mr-2" />
+                            {meta.label}
+                          </TabsTrigger>
+                        );
+                      })}
+                    </TabsList>
+
+                    {Object.entries(SECTION_META).map(([key, meta]) => {
+                      const text = assignment[key] || '';
+                      return (
+                        <TabsContent key={key} value={key} data-testid={`tab-content-${key}`}>
+                          <div className="flex items-center justify-between mb-3">
+                            <p className="text-sm text-muted-foreground">{meta.description}</p>
+                            {text && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => copySection(text, meta.label)}
+                                data-testid={`copy-${key}-btn`}
+                              >
+                                <Copy className="w-4 h-4 mr-1" /> Copy
+                              </Button>
+                            )}
+                          </div>
+                          {text ? (
+                            <div className="writing-area prose prose-sm max-w-none whitespace-pre-wrap" data-testid={`section-${key}`}>
+                              {text}
+                            </div>
+                          ) : (
+                            <p className="text-sm text-muted-foreground italic">No {meta.label.toLowerCase()} available.</p>
+                          )}
+                        </TabsContent>
+                      );
+                    })}
+                  </Tabs>
                 </CardContent>
               </Card>
             )}
           </div>
 
-          {/* Sidebar Actions */}
+          {/* Sidebar */}
           <div className="lg:col-span-1">
             <Card className="bg-white border border-border/40 rounded-sm sticky top-8" data-testid="action-sidebar">
               <CardHeader>
                 <CardTitle className="text-lg" style={{ fontFamily: 'Fraunces, serif' }}>Actions</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                {/* Draft Status - Payment needed */}
                 {assignment.status === 'draft' && (
                   <>
                     <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-sm">
@@ -236,7 +324,7 @@ const AssignmentDetail = () => {
                         <div>
                           <p className="font-medium text-yellow-800">Payment Required</p>
                           <p className="text-sm text-yellow-700 mt-1">
-                            Complete payment to start generating your content.
+                            Complete payment and AI generation will begin automatically.
                           </p>
                         </div>
                       </div>
@@ -257,8 +345,7 @@ const AssignmentDetail = () => {
                   </>
                 )}
 
-                {/* Paid Status - Ready to generate */}
-                {assignment.status === 'paid' && (
+                {assignment.status === 'paid' && assignment.generation_status !== 'generating' && !hasContent && (
                   <>
                     <div className="p-4 bg-blue-50 border border-blue-200 rounded-sm">
                       <div className="flex items-start gap-2">
@@ -266,7 +353,7 @@ const AssignmentDetail = () => {
                         <div>
                           <p className="font-medium text-blue-800">Ready to Generate</p>
                           <p className="text-sm text-blue-700 mt-1">
-                            Click below to generate your academic content with AI.
+                            Start generating your outline, draft, and writing tips.
                           </p>
                         </div>
                       </div>
@@ -274,40 +361,42 @@ const AssignmentDetail = () => {
                     <Button
                       className="w-full bg-accent text-accent-foreground hover:bg-accent/90 rounded-sm py-5"
                       onClick={handleGenerate}
-                      disabled={generating}
                       data-testid="generate-btn"
                     >
-                      {generating ? (
-                        <>
-                          <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                          Generating...
-                        </>
-                      ) : (
-                        <>
-                          <Sparkles className="w-4 h-4 mr-2" />
-                          Generate Content
-                        </>
-                      )}
+                      <Sparkles className="w-4 h-4 mr-2" />
+                      Generate Now
                     </Button>
                   </>
                 )}
 
-                {/* Completed Status */}
-                {assignment.status === 'completed' && (
-                  <div className="p-4 bg-green-50 border border-green-200 rounded-sm">
+                {isGenerating && (
+                  <div className="p-4 bg-purple-50 border border-purple-200 rounded-sm">
                     <div className="flex items-start gap-2">
-                      <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
+                      <Loader2 className="w-5 h-5 text-purple-600 flex-shrink-0 mt-0.5 animate-spin" />
                       <div>
-                        <p className="font-medium text-green-800">Content Ready</p>
-                        <p className="text-sm text-green-700 mt-1">
-                          Your content has been generated. Use it as a learning reference!
+                        <p className="font-medium text-purple-800">Generating…</p>
+                        <p className="text-sm text-purple-700 mt-1">
+                          Hang tight — this page refreshes automatically.
                         </p>
                       </div>
                     </div>
                   </div>
                 )}
 
-                {/* Info */}
+                {assignment.status === 'completed' && hasContent && (
+                  <div className="p-4 bg-green-50 border border-green-200 rounded-sm">
+                    <div className="flex items-start gap-2">
+                      <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
+                      <div>
+                        <p className="font-medium text-green-800">Materials Ready</p>
+                        <p className="text-sm text-green-700 mt-1">
+                          Use these as a learning reference — write your final version in your own voice.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 <div className="pt-4 border-t border-border/40 space-y-3 text-sm">
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Subject</span>

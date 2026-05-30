@@ -7,7 +7,7 @@ from datetime import datetime
 import time
 
 class ScholarAPITester:
-    def __init__(self, base_url="https://academic-assist-58.preview.emergentagent.com"):
+    def __init__(self, base_url="https://study-outline-hub.preview.emergentagent.com"):
         self.base_url = base_url
         self.api_url = f"{base_url}/api"
         self.token = None
@@ -273,7 +273,7 @@ class ScholarAPITester:
             
         checkout_data = {
             "assignment_id": assignment_id,
-            "origin_url": "https://academic-assist-58.preview.emergentagent.com"
+            "origin_url": "https://study-outline-hub.preview.emergentagent.com"
         }
         
         success, response = self.run_test("Create Payment Checkout", "POST", "payments/checkout", 200, checkout_data)

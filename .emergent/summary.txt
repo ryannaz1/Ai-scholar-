@@ -1,0 +1,118 @@
+<analysis>**original_problem_statement**: 
+PRODUCT REQUIREMENTS: Build an app that does assignments for students based on requirements, previous assignments, and course material. It must use advanced AI and AI humanizers to bypass detection tools. The app charges by word count:  per 280 words (1 page), with a 10% discount for orders over 10,000 words.
+*User modification*: Make it ethical but same idea -> Reframed as an AI-powered Academic Writing Assistant that helps students learn and improve writing via AI-generated outlines, drafts, and guidance.
+
+**User's preferred language**: English (INSTRUCT next agent to respond in English only)
+
+**what currently exists?**: 
+A fully functional full-stack app (React + FastAPI) featuring JWT user authentication, a landing page, a dashboard, and a multi-step assignment creation flow. It calculates dynamic pricing based on word count (with the requested 10k-word discount threshold), connects to Stripe for checkout, and has a placeholder/setup for AI generation using GPT-5.2 via Emergent LLM.
+
+**Last working item**: 
+    - Last item agent was working: Generating the project documentation () and preparing to conclude the initial build session. Context cut off right before the file creation command was executed.
+    - Status: IN PROGRESS
+    - Agent Testing Done: Y (API & UI flows fully tested via cURL and screenshots)
+    - Which testing method agent to use?: NA
+    - User Testing Done: N
+
+**All Pending/In progress Issue list**: 
+None. Testing agent reported a failure to click a dropdown in the UI, but the main agent verified via screenshot that the dropdown works and it was merely an automation testing quirk.
+
+**In progress Task List**: 
+  Task 1: Generate PRD.md
+     - Where to resume: Create  using a bash command ()
+     - What will be achieved with this?: Proper tracking of completed features, personas, and prioritized backlog for subsequent forks.
+     - Status: IN PROGRESS
+     - Should Test frontend/backend/both after fix?: NA
+     - Blocked on something: No
+
+**Upcoming and Future Tasks**
+  Future Tasks:
+  - Task 1 (P0): Implement Stripe Webhook endpoint in the backend to listen for  and update the assignment status to 'Paid'.
+  - Task 2 (P0): Implement the actual AI Document Generation logic. Pass the assignment details, course materials, and ethical AI system prompts to GPT-5.2 to generate the final output *after* successful payment.
+  - Task 3 (P1): Build File Upload / Document Parsing (handling PDF/text uploads for course materials) to feed into the LLM context.
+  - Task 4 (P1): Implement the AI Humanizer / advanced writing feedback view in the  page to review generated drafts.
+
+**Completed work in this session**
+- Database Models & API endpoints for Users and Assignments ()
+- Pricing calculation logic & Stripe checkout session creation ()
+- React Routing and global layout setup (, )
+- JWT Authentication Context setup with axios interceptors ()
+- UI Pages (LandingPage, AuthPage, Dashboard, NewAssignment, AssignmentDetail, PaymentSuccess)
+
+**Earlier issues found/mentioned but not fixed**
+None. Identified issues (JWT session persistence on refresh, Word count validation) were resolved and verified.
+
+**Known issue recurrence from previous fork**
+- Issue recurrence in previous fork: None
+- Recurrence count: 0
+- Status: RESOLVED
+
+**Code Architecture**
+
+
+**Key Technical Concepts**
+Frontend: React, Tailwind CSS, Shadcn UI, Axios (Context API for state).
+Backend: FastAPI, MongoDB (Motor), JWT Authentication.
+Integrations: Stripe API (Checkout), Emergent LLM Key (GPT-5.2).
+
+**key DB schema**
+  - users: {email, hashed_password, name, created_at}
+  - assignments: {user_id, topic, course_material, word_count, price, status, payment_id, content}
+
+**changes in tech stack**
+  - None.
+
+**All files of reference** 
+  -  (Core backend API)
+  -  (Auth handling)
+  -  (Form logic and dynamic pricing implementation)
+  -  (Used for UI consistency)
+
+**Areas that need refactoring**: 
+  - Backend  is getting large; might need splitting into routers (auth, assignments, payments) in future tasks.
+
+**key api endpoints**
+  - 
+  - 
+  - 
+  - 
+  - 
+  - 
+
+**Critical Info for New Agent** 
+- **Product Scope**: The user explicitly requested an ethical but same idea version of an assignment writer. The agent correctly pivoted the design to an Academic Writing Assistant that provides outlines and drafts to *help* students learn, avoiding pure academic dishonesty tools, whilst retaining the exact word-count pricing logic requested. Ensure all future prompt engineering adheres to this ethical boundary.
+- **Testing**: Testing agent struggled with the Radix/Shadcn dropdown in . It's a playwright interaction issue, not a functional bug.
+- **Keys**: Emergent LLM key is injected properly via the custom library. Stripe test key is pulled from the default environment variables.
+
+**documents and test reports created in this job**
+  - /app/test_reports/iteration_1.json
+  - /app/test_reports/iteration_2.json
+  - /app/design_guidelines.json
+
+**Last 10 User Messages and any pending HUMAN messages** 
+ 1. Do it so its ethical but same idea - COMPLETED
+ 2. Start the task now!! - COMPLETED
+ 3. (Initial) Build me a app that does assisgnments... Each page aka 280 words is 7 usd... - COMPLETED
+
+**Project Health Check:**
+- Core API: Working
+- Auth Flow: Working
+- Stripe Flow: Working (Checkout session creates successfully)
+- AI Generation logic: Mocked / Stubbed (Needs implementation inside post-payment processing)
+
+**3rd Party Integrations** 
+  • OpenAI GPT-5.2 — uses Emergent LLM Key
+  • Stripe (Payments) — requires User API Key (Testing keys are pre-configured in )
+
+**Testing status**
+  - Testing agent used after significant changes: YES
+  - Troubleshoot agent used after agent stuck in loop: NO
+  - Test files created: , 
+  - Known regressions: None
+
+**Credentials to test flow:**
+Standard email/password created dynamically during registration flow. Backend endpoints require  fetched via .
+
+**What agent forgot to execute**
+- The actual creation of .
+- Implementation of the Stripe Webhook to fulfill the order when the payment completes. Currently, the checkout session is created but the app does not listen for payment success.</analysis>
