@@ -22,7 +22,7 @@ const NewAssignment = () => {
   const { user } = useAuth();
   const [loading, setLoading] = useState(false);
   const [uploadingFile, setUploadingFile] = useState(false);
-  const [uploadedFiles, setUploadedFiles] = useState([]);
+  const [uploadedFiles, setUploadedFiles] = useState([]); // {id, name, category}
   const [assignmentId, setAssignmentId] = useState(null);
   
   const [formData, setFormData] = useState({
@@ -66,7 +66,7 @@ const NewAssignment = () => {
     setFormData(prev => ({ ...prev, word_count: clampedValue }));
   };
 
-  const handleFileUpload = async (e) => {
+  const handleFileUpload = async (e, category = 'course_material') => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
@@ -96,6 +96,7 @@ const NewAssignment = () => {
       setUploadingFile(true);
       const formDataUpload = new FormData();
       formDataUpload.append('file', file);
+      formDataUpload.append('category', category);
 
       try {
         const res = await axios.post(
@@ -103,10 +104,11 @@ const NewAssignment = () => {
           formDataUpload,
           { headers: { 'Content-Type': 'multipart/form-data' } }
         );
-        setUploadedFiles(prev => [...prev, { id: res.data.id, name: file.name }]);
-        toast.success(`${file.name} uploaded successfully`);
+        setUploadedFiles(prev => [...prev, { id: res.data.id, name: file.name, category }]);
+        toast.success(`${file.name} uploaded`);
       } catch (error) {
-        toast.error(`Failed to upload ${file.name}`);
+        const msg = error.response?.data?.detail || `Failed to upload ${file.name}`;
+        toast.error(msg);
       } finally {
         setUploadingFile(false);
       }
@@ -308,68 +310,80 @@ const NewAssignment = () => {
                 </CardContent>
               </Card>
 
-              {/* File Upload */}
+              {/* File Upload — 3 categorized zones */}
               <Card className="bg-white border border-border/40 rounded-sm" data-testid="upload-card">
                 <CardHeader>
-                  <CardTitle className="text-lg" style={{ fontFamily: 'Fraunces, serif' }}>Course Materials</CardTitle>
+                  <CardTitle className="text-lg" style={{ fontFamily: 'Fraunces, serif' }}>Supporting Documents</CardTitle>
                   <CardDescription>
-                    Upload syllabus, readings, or previous assignments for context (optional)
+                    Categorize uploads so the AI uses each kind of context correctly (all optional).
                   </CardDescription>
                 </CardHeader>
-                <CardContent>
-                  <div className="border-2 border-dashed border-border rounded-sm p-8 text-center">
-                    <input
-                      type="file"
-                      id="file-upload"
-                      multiple
-                      accept=".pdf,.docx,.doc,.txt"
-                      onChange={handleFileUpload}
-                      className="hidden"
-                      data-testid="file-input"
-                    />
-                    <label
-                      htmlFor="file-upload"
-                      className="cursor-pointer flex flex-col items-center"
-                    >
-                      {uploadingFile ? (
-                        <Loader2 className="w-10 h-10 text-muted-foreground animate-spin mb-3" />
-                      ) : (
-                        <Upload className="w-10 h-10 text-muted-foreground mb-3" />
-                      )}
-                      <span className="text-sm font-medium">
-                        {uploadingFile ? 'Uploading...' : 'Click to upload or drag and drop'}
-                      </span>
-                      <span className="text-xs text-muted-foreground mt-1">
-                        PDF, DOCX, DOC, TXT (max 10MB each)
-                      </span>
-                    </label>
-                  </div>
-
-                  {/* Uploaded Files */}
-                  {uploadedFiles.length > 0 && (
-                    <div className="mt-4 space-y-2">
-                      {uploadedFiles.map((file) => (
-                        <div
-                          key={file.id}
-                          className="flex items-center justify-between p-3 bg-secondary/50 rounded-sm"
-                          data-testid={`uploaded-file-${file.id}`}
-                        >
-                          <div className="flex items-center gap-2">
-                            <FileText className="w-4 h-4 text-primary" />
-                            <span className="text-sm">{file.name}</span>
-                            <CheckCircle className="w-4 h-4 text-green-600" />
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => removeFile(file.id)}
-                            className="text-muted-foreground hover:text-foreground"
-                          >
-                            <X className="w-4 h-4" />
-                          </button>
+                <CardContent className="space-y-4">
+                  {[
+                    { key: 'requirements', label: 'Assignment Brief / Requirements', hint: 'Rubric, prompt sheet, instructions from your professor' },
+                    { key: 'course_material', label: 'Course Material', hint: 'Syllabus, readings, lecture notes, slides' },
+                    { key: 'previous_assignment', label: 'Your Previous Work', hint: 'Past graded work — used to subtly match your voice (never copied)' },
+                  ].map(zone => {
+                    const filesInZone = uploadedFiles.filter(f => f.category === zone.key);
+                    return (
+                      <div key={zone.key} data-testid={`upload-zone-${zone.key}`}>
+                        <div className="flex items-baseline justify-between mb-1">
+                          <Label className="text-sm font-medium">{zone.label}</Label>
+                          <span className="text-xs text-muted-foreground">{filesInZone.length} file{filesInZone.length === 1 ? '' : 's'}</span>
                         </div>
-                      ))}
-                    </div>
-                  )}
+                        <p className="text-xs text-muted-foreground mb-2">{zone.hint}</p>
+                        <div className="border-2 border-dashed border-border rounded-sm p-4 text-center hover:border-primary/40 transition-colors">
+                          <input
+                            type="file"
+                            id={`file-upload-${zone.key}`}
+                            multiple
+                            accept=".pdf,.docx,.doc,.txt"
+                            onChange={(e) => handleFileUpload(e, zone.key)}
+                            className="hidden"
+                            data-testid={`file-input-${zone.key}`}
+                          />
+                          <label
+                            htmlFor={`file-upload-${zone.key}`}
+                            className="cursor-pointer flex flex-col items-center"
+                          >
+                            {uploadingFile ? (
+                              <Loader2 className="w-6 h-6 text-muted-foreground animate-spin mb-1" />
+                            ) : (
+                              <Upload className="w-6 h-6 text-muted-foreground mb-1" />
+                            )}
+                            <span className="text-xs font-medium">
+                              {uploadingFile ? 'Uploading…' : 'Click or drop files'}
+                            </span>
+                            <span className="text-[10px] text-muted-foreground mt-0.5">PDF, DOCX, TXT · max 10MB</span>
+                          </label>
+                        </div>
+                        {filesInZone.length > 0 && (
+                          <div className="mt-2 space-y-1">
+                            {filesInZone.map((file) => (
+                              <div
+                                key={file.id}
+                                className="flex items-center justify-between p-2 bg-secondary/50 rounded-sm text-sm"
+                                data-testid={`uploaded-file-${file.id}`}
+                              >
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <FileText className="w-3.5 h-3.5 text-primary flex-shrink-0" />
+                                  <span className="truncate">{file.name}</span>
+                                  <CheckCircle className="w-3.5 h-3.5 text-green-600 flex-shrink-0" />
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => removeFile(file.id)}
+                                  className="text-muted-foreground hover:text-foreground flex-shrink-0 ml-2"
+                                >
+                                  <X className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </CardContent>
               </Card>
             </div>

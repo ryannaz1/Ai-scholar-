@@ -3,7 +3,7 @@ import { Link, useParams, useNavigate } from 'react-router-dom';
 import {
   BookOpen, ArrowLeft, CreditCard, Loader2,
   Download, Sparkles, CheckCircle, Clock,
-  Copy, AlertCircle, ListTree, FileText, Lightbulb, RefreshCw
+  Copy, AlertCircle, ListTree, FileText, Lightbulb, RefreshCw, Wand2
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
@@ -384,17 +384,28 @@ const AssignmentDetail = () => {
                 )}
 
                 {assignment.status === 'completed' && hasContent && (
-                  <div className="p-4 bg-green-50 border border-green-200 rounded-sm">
-                    <div className="flex items-start gap-2">
-                      <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
-                      <div>
-                        <p className="font-medium text-green-800">Materials Ready</p>
-                        <p className="text-sm text-green-700 mt-1">
-                          Use these as a learning reference — write your final version in your own voice.
-                        </p>
+                  <>
+                    <div className="p-4 bg-green-50 border border-green-200 rounded-sm">
+                      <div className="flex items-start gap-2">
+                        <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
+                        <div>
+                          <p className="font-medium text-green-800">Materials Ready</p>
+                          <p className="text-sm text-green-700 mt-1">
+                            Use these as a learning reference — write your final version in your own voice.
+                          </p>
+                        </div>
                       </div>
                     </div>
-                  </div>
+                    <Link to={`/assignment/${assignment.id}/workspace`} className="block">
+                      <Button
+                        className="w-full bg-accent text-accent-foreground hover:bg-accent/90 rounded-sm py-5"
+                        data-testid="open-workspace-btn"
+                      >
+                        <Wand2 className="w-4 h-4 mr-2" />
+                        Open Rewrite Workspace
+                      </Button>
+                    </Link>
+                  </>
                 )}
 
                 <div className="pt-4 border-t border-border/40 space-y-3 text-sm">

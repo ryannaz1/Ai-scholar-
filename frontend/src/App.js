@@ -11,6 +11,7 @@ import AuthPage from "./pages/AuthPage";
 import Dashboard from "./pages/Dashboard";
 import NewAssignment from "./pages/NewAssignment";
 import AssignmentDetail from "./pages/AssignmentDetail";
+import RewriteWorkspace from "./pages/RewriteWorkspace";
 import PaymentSuccess from "./pages/PaymentSuccess";
 
 // Protected Route Component
@@ -99,6 +100,14 @@ function App() {
                 <AssignmentDetail />
               </ProtectedRoute>
             } 
+          />
+          <Route
+            path="/assignment/:id/workspace"
+            element={
+              <ProtectedRoute>
+                <RewriteWorkspace />
+              </ProtectedRoute>
+            }
           />
           <Route 
             path="/payment/success" 

@@ -1,7 +1,9 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, UploadFile, File, Request, Body, BackgroundTasks
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, UploadFile, File, Request, Body, BackgroundTasks, Form
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import json
 import re
+import asyncio
+import resend
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -321,26 +323,36 @@ async def get_assignment(assignment_id: str, user: dict = Depends(get_current_us
 async def upload_course_material(
     assignment_id: str,
     file: UploadFile = File(...),
+    category: str = Form("course_material"),
     user: dict = Depends(get_current_user)
 ):
     assignment = await db.assignments.find_one({"id": assignment_id, "user_id": user["id"]})
     if not assignment:
         raise HTTPException(status_code=404, detail="Assignment not found")
-    
+
+    # Validate category
+    valid_categories = ["course_material", "previous_assignment", "requirements"]
+    if category not in valid_categories:
+        category = "course_material"
+
     # Validate file type
     allowed_types = [".pdf", ".docx", ".doc", ".txt"]
     file_ext = Path(file.filename).suffix.lower()
     if file_ext not in allowed_types:
         raise HTTPException(status_code=400, detail=f"File type {file_ext} not allowed")
-    
+
     # Save file
     file_id = str(uuid.uuid4())
     file_path = UPLOAD_DIR / f"{file_id}{file_ext}"
-    
+
     content = await file.read()
+    # Size cap 10MB
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File too large (max 10MB)")
+
     async with aiofiles.open(file_path, 'wb') as f:
         await f.write(content)
-    
+
     # Extract text
     extracted_text = ""
     if file_ext == ".pdf":
@@ -349,7 +361,7 @@ async def upload_course_material(
         extracted_text = await extract_text_from_docx(content)
     elif file_ext == ".txt":
         extracted_text = content.decode('utf-8', errors='ignore')
-    
+
     # Store material info
     material_doc = {
         "id": file_id,
@@ -357,19 +369,20 @@ async def upload_course_material(
         "user_id": user["id"],
         "filename": file.filename,
         "file_path": str(file_path),
+        "category": category,
         "extracted_text": extracted_text[:50000],  # Limit text
         "created_at": datetime.now(timezone.utc).isoformat()
     }
-    
+
     await db.course_materials.insert_one(material_doc)
-    
+
     # Update assignment
     await db.assignments.update_one(
         {"id": assignment_id},
         {"$push": {"course_materials": file_id}}
     )
-    
-    return {"id": file_id, "filename": file.filename, "status": "uploaded"}
+
+    return {"id": file_id, "filename": file.filename, "category": category, "status": "uploaded"}
 
 # ==================== AI GENERATION ROUTES ====================
 
@@ -426,13 +439,30 @@ async def run_generation(assignment_id: str):
 
         materials = await db.course_materials.find(
             {"assignment_id": assignment_id},
-            {"_id": 0, "extracted_text": 1, "filename": 1}
-        ).to_list(10)
+            {"_id": 0, "extracted_text": 1, "filename": 1, "category": 1}
+        ).to_list(20)
 
-        materials_context = "\n\n".join([
-            f"--- {m['filename']} ---\n{m['extracted_text'][:8000]}"
-            for m in materials
-        ])
+        # Group materials by category for clearer prompt structure
+        grouped = {"course_material": [], "previous_assignment": [], "requirements": []}
+        for m in materials:
+            cat = m.get("category") or "course_material"
+            if cat not in grouped:
+                cat = "course_material"
+            grouped[cat].append(m)
+
+        def section(label, items, char_limit=6000):
+            if not items:
+                return ""
+            blocks = "\n\n".join(
+                f"[{m['filename']}]\n{m['extracted_text'][:char_limit]}" for m in items
+            )
+            return f"\n\n=== {label} ===\n{blocks}"
+
+        materials_context = (
+            section("ASSIGNMENT BRIEF / REQUIREMENTS DOCS", grouped["requirements"], 8000)
+            + section("COURSE MATERIAL (syllabus, readings, slides)", grouped["course_material"], 6000)
+            + section("STUDENT'S PREVIOUS WORK (use ONLY to match their voice/style — never copy)", grouped["previous_assignment"], 4000)
+        ).strip()
 
         user_prompt = f"""Assignment Details:
 Title: {assignment['title']}
@@ -442,11 +472,11 @@ Word Count Target: {assignment['word_count']} words (this applies to the DRAFT s
 Writing Style: {assignment['writing_style']}
 Additional Notes: {assignment.get('additional_notes', '')}
 
-{"Course Materials Context:" if materials_context else ""}
-{materials_context[:15000] if materials_context else "No additional materials provided."}
+{materials_context if materials_context else "No supplemental materials provided."}
 
 Produce the JSON object with the three required keys (outline, draft, writing_tips).
 The DRAFT must be approximately {assignment['word_count']} words and demonstrate scholarly structure.
+If STUDENT'S PREVIOUS WORK is provided, subtly match their tone & vocabulary in the draft (without copying phrases).
 Remember: this is a LEARNING REFERENCE, not a final submission. Encourage the student's own voice in writing_tips."""
 
         from emergentintegrations.llm.chat import LlmChat, UserMessage
@@ -675,6 +705,293 @@ async def stripe_webhook(request: Request, background_tasks: BackgroundTasks):
     except Exception as e:
         logger.error(f"Webhook error: {e}")
         return {"status": "error", "message": str(e)}
+
+# ==================== COURSE MATERIALS / REWRITE / AI CHECK ====================
+
+class CourseMaterialItem(BaseModel):
+    id: str
+    filename: str
+    category: str
+    created_at: str
+
+@api_router.get("/assignments/{assignment_id}/materials", response_model=List[CourseMaterialItem])
+async def list_materials(assignment_id: str, user: dict = Depends(get_current_user)):
+    assignment = await db.assignments.find_one({"id": assignment_id, "user_id": user["id"]})
+    if not assignment:
+        raise HTTPException(status_code=404, detail="Assignment not found")
+    docs = await db.course_materials.find(
+        {"assignment_id": assignment_id},
+        {"_id": 0, "id": 1, "filename": 1, "category": 1, "created_at": 1}
+    ).sort("created_at", -1).to_list(50)
+    # Backfill category if missing
+    for d in docs:
+        d.setdefault("category", "course_material")
+    return [CourseMaterialItem(**d) for d in docs]
+
+
+class RewriteAnalyzeRequest(BaseModel):
+    text: str
+    mode: Optional[str] = "draft"  # "draft" = full one-shot; "paragraph" = single paragraph workspace mode
+
+REWRITE_COACH_SYSTEM = """You are an expert academic writing tutor. The student is rewriting an AI-generated reference draft in their own voice. Identify phrases or passages that read as "AI-generated" — over-formal hedging, em-dash overload, generic cliches ("delve into", "navigate the complexities", "in today's world"), uniform sentence rhythm, vague abstractions, redundant tricolons.
+
+For each issue, return the EXACT phrase to flag, classify the type, explain why in one sentence, and provide a concrete human-style rewrite.
+
+OUTPUT FORMAT (CRITICAL): Return ONLY a valid JSON object (no markdown fences) shaped exactly:
+{
+  "summary": "1-2 sentence overall impression",
+  "ai_likelihood": 0-100 integer (rough estimate of how AI-ish the text reads),
+  "issues": [
+    {"phrase": "<exact substring>", "type": "cliche|hedge|uniform|abstract|em_dash|passive|other", "why": "<one short sentence>", "suggestion": "<rewrite>"}
+  ]
+}
+Return at most 15 issues. Pick the highest-impact ones."""
+
+@api_router.post("/rewrite-coach/analyze")
+async def rewrite_coach_analyze(data: RewriteAnalyzeRequest, user: dict = Depends(get_current_user)):
+    text = (data.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Text is required")
+    if len(text) > 20000:
+        text = text[:20000]
+    try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+        api_key = os.environ.get('EMERGENT_LLM_KEY')
+        chat = LlmChat(
+            api_key=api_key,
+            session_id=f"rewrite-coach-{user['id']}-{uuid.uuid4().hex[:8]}",
+            system_message=REWRITE_COACH_SYSTEM
+        ).with_model("openai", "gpt-5.2")
+        response = await chat.send_message(UserMessage(text=f"Analyze this text:\n\n{text}"))
+        parsed = _parse_ai_json(response)
+        if not isinstance(parsed, dict):
+            parsed = {}
+        return {
+            "summary": parsed.get("summary", ""),
+            "ai_likelihood": int(parsed.get("ai_likelihood", 50)) if isinstance(parsed.get("ai_likelihood"), (int, float, str)) and str(parsed.get("ai_likelihood")).isdigit() else parsed.get("ai_likelihood", 50),
+            "issues": parsed.get("issues", [])[:15],
+        }
+    except Exception as e:
+        logger.exception(f"Rewrite coach error: {e}")
+        raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
+
+
+# ----- AI Check orders (manual: emailed to owner) -----
+
+AI_CHECK_PRICES = {"originality": 10.0, "turnitin": 15.0}
+
+class AICheckOrderRequest(BaseModel):
+    assignment_id: str
+    tier: str  # 'originality' | 'turnitin'
+    text_to_check: str
+    origin_url: str
+
+class AICheckOrderResponse(BaseModel):
+    url: str
+    session_id: str
+    order_id: str
+
+
+async def send_ai_check_email(order_id: str):
+    """Background task: notify owner about a paid AI check order with the text attached."""
+    try:
+        order = await db.ai_check_orders.find_one({"id": order_id}, {"_id": 0})
+        if not order:
+            logger.error(f"AI check email: order {order_id} not found")
+            return
+
+        owner_email = os.environ.get("OWNER_EMAIL")
+        api_key = os.environ.get("RESEND_API_KEY")
+        sender = os.environ.get("SENDER_EMAIL", "onboarding@resend.dev")
+
+        if not (api_key and owner_email) or api_key.startswith("re_placeholder"):
+            logger.warning(f"Resend not configured; skipping email for order {order_id}")
+            await db.ai_check_orders.update_one(
+                {"id": order_id}, {"$set": {"email_status": "skipped_no_key"}}
+            )
+            return
+
+        resend.api_key = api_key
+
+        tier_label = "Turnitin" if order["tier"] == "turnitin" else "Originality.ai"
+        student_name = order.get("student_name", "Unknown")
+        student_email = order.get("student_email", "unknown@example.com")
+        assignment_title = order.get("assignment_title", "Untitled")
+        word_count = order.get("word_count", 0)
+        text = order.get("text_to_check", "")
+
+        html_content = f"""
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #1a2842;">New AI Check Order — {tier_label}</h2>
+          <table style="width:100%; border-collapse: collapse; margin: 16px 0;">
+            <tr><td style="padding:8px; background:#f5f1e8;"><b>Order ID</b></td><td style="padding:8px; background:#f5f1e8;">{order_id}</td></tr>
+            <tr><td style="padding:8px;"><b>Tier</b></td><td style="padding:8px;">{tier_label} (${AI_CHECK_PRICES[order['tier']]:.2f})</td></tr>
+            <tr><td style="padding:8px; background:#f5f1e8;"><b>Student</b></td><td style="padding:8px; background:#f5f1e8;">{student_name} &lt;{student_email}&gt;</td></tr>
+            <tr><td style="padding:8px;"><b>Assignment</b></td><td style="padding:8px;">{assignment_title}</td></tr>
+            <tr><td style="padding:8px; background:#f5f1e8;"><b>Word count</b></td><td style="padding:8px; background:#f5f1e8;">{word_count}</td></tr>
+            <tr><td style="padding:8px;"><b>Payment status</b></td><td style="padding:8px;">PAID</td></tr>
+          </table>
+          <h3 style="color:#1a2842;">Text submitted for checking</h3>
+          <pre style="background:#fafafa; padding:12px; border:1px solid #e0e0e0; white-space: pre-wrap; font-family: Georgia, serif; font-size: 13px;">{text[:50000]}</pre>
+          <p style="color:#666; font-size: 12px;">Reply directly to {student_email} with the {tier_label} report.</p>
+        </div>
+        """
+
+        import base64
+        text_bytes = text.encode("utf-8")
+        b64 = base64.b64encode(text_bytes).decode("ascii")
+
+        params = {
+            "from": sender,
+            "to": [owner_email],
+            "reply_to": student_email,
+            "subject": f"[Scholar AI Check] {tier_label} — {student_name} — {assignment_title}",
+            "html": html_content,
+            "attachments": [
+                {"filename": f"order_{order_id}_text.txt", "content": b64}
+            ],
+        }
+        email = await asyncio.to_thread(resend.Emails.send, params)
+        email_id = email.get("id") if isinstance(email, dict) else None
+        await db.ai_check_orders.update_one(
+            {"id": order_id},
+            {"$set": {"email_status": "sent", "email_id": email_id}}
+        )
+        logger.info(f"AI check order {order_id} emailed to owner (resend id={email_id})")
+    except Exception as e:
+        logger.exception(f"Failed to email AI check order {order_id}: {e}")
+        await db.ai_check_orders.update_one(
+            {"id": order_id}, {"$set": {"email_status": "failed", "email_error": str(e)[:300]}}
+        )
+
+
+@api_router.post("/ai-check/order", response_model=AICheckOrderResponse)
+async def create_ai_check_order(
+    data: AICheckOrderRequest,
+    request: Request,
+    user: dict = Depends(get_current_user)
+):
+    if data.tier not in AI_CHECK_PRICES:
+        raise HTTPException(status_code=400, detail="Invalid tier")
+    text = (data.text_to_check or "").strip()
+    if len(text) < 50:
+        raise HTTPException(status_code=400, detail="Text is too short to check")
+
+    assignment = await db.assignments.find_one(
+        {"id": data.assignment_id, "user_id": user["id"]}, {"_id": 0}
+    )
+    if not assignment:
+        raise HTTPException(status_code=404, detail="Assignment not found")
+
+    order_id = str(uuid.uuid4())
+    word_count = len(text.split())
+    amount = AI_CHECK_PRICES[data.tier]
+    now = datetime.now(timezone.utc).isoformat()
+
+    try:
+        from emergentintegrations.payments.stripe.checkout import (
+            StripeCheckout, CheckoutSessionRequest, CheckoutSessionResponse
+        )
+        stripe_api_key = os.environ.get('STRIPE_API_KEY')
+        host_url = str(request.base_url).rstrip('/')
+        webhook_url = f"{host_url}/api/webhook/stripe"
+        stripe_checkout = StripeCheckout(api_key=stripe_api_key, webhook_url=webhook_url)
+
+        origin = data.origin_url.rstrip('/')
+        success_url = f"{origin}/assignment/{data.assignment_id}?ai_check_session={{CHECKOUT_SESSION_ID}}"
+        cancel_url = f"{origin}/assignment/{data.assignment_id}"
+
+        checkout_request = CheckoutSessionRequest(
+            amount=amount,
+            currency="usd",
+            success_url=success_url,
+            cancel_url=cancel_url,
+            metadata={
+                "purpose": "ai_check_order",
+                "order_id": order_id,
+                "tier": data.tier,
+                "assignment_id": data.assignment_id,
+                "user_id": user["id"],
+            },
+        )
+        session: CheckoutSessionResponse = await stripe_checkout.create_checkout_session(checkout_request)
+
+        order_doc = {
+            "id": order_id,
+            "user_id": user["id"],
+            "student_name": user.get("name", ""),
+            "student_email": user["email"],
+            "assignment_id": data.assignment_id,
+            "assignment_title": assignment.get("title", ""),
+            "tier": data.tier,
+            "amount": amount,
+            "word_count": word_count,
+            "text_to_check": text[:80000],
+            "status": "pending_payment",
+            "session_id": session.session_id,
+            "email_status": "not_sent",
+            "created_at": now,
+        }
+        await db.ai_check_orders.insert_one(order_doc)
+
+        return AICheckOrderResponse(url=session.url, session_id=session.session_id, order_id=order_id)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"AI check order creation failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to create order: {str(e)}")
+
+
+@api_router.get("/ai-check/status/{session_id}")
+async def ai_check_status(
+    session_id: str,
+    background_tasks: BackgroundTasks,
+    user: dict = Depends(get_current_user)
+):
+    order = await db.ai_check_orders.find_one(
+        {"session_id": session_id, "user_id": user["id"]}, {"_id": 0, "text_to_check": 0}
+    )
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    # If still pending, check Stripe
+    if order["status"] == "pending_payment":
+        try:
+            from emergentintegrations.payments.stripe.checkout import StripeCheckout
+            stripe_checkout = StripeCheckout(
+                api_key=os.environ.get('STRIPE_API_KEY'), webhook_url=""
+            )
+            stripe_status = await stripe_checkout.get_checkout_status(session_id)
+            if stripe_status.payment_status == "paid":
+                await db.ai_check_orders.update_one(
+                    {"id": order["id"]},
+                    {"$set": {"status": "paid", "paid_at": datetime.now(timezone.utc).isoformat()}}
+                )
+                order["status"] = "paid"
+                # Fire-and-forget email
+                background_tasks.add_task(send_ai_check_email, order["id"])
+        except Exception as e:
+            logger.warning(f"Stripe status check failed for {session_id}: {e}")
+
+    return {
+        "order_id": order["id"],
+        "tier": order["tier"],
+        "amount": order["amount"],
+        "status": order["status"],
+        "email_status": order.get("email_status", "not_sent"),
+        "created_at": order.get("created_at"),
+    }
+
+
+@api_router.get("/ai-check/orders/{assignment_id}")
+async def list_ai_check_orders(assignment_id: str, user: dict = Depends(get_current_user)):
+    docs = await db.ai_check_orders.find(
+        {"user_id": user["id"], "assignment_id": assignment_id},
+        {"_id": 0, "text_to_check": 0}
+    ).sort("created_at", -1).to_list(50)
+    return docs
+
 
 # ==================== STATS ROUTES ====================
 
