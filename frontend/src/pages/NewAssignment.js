@@ -258,7 +258,7 @@ const NewAssignment = () => {
                         type="number"
                         min="280"
                         max="50000"
-                        step="100"
+                        step="1"
                         value={formData.word_count}
                         onChange={handleWordCountChange}
                         className="rounded-sm w-32"
