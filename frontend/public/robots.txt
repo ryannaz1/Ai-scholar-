@@ -1,0 +1,9 @@
+User-agent: *
+Allow: /
+Disallow: /dashboard
+Disallow: /assignment/
+Disallow: /admin/
+Disallow: /new-assignment
+Disallow: /payment-success
+
+Sitemap: https://aischolar.app/sitemap.xml

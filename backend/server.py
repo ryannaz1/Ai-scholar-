@@ -109,6 +109,12 @@ class AssignmentResponse(BaseModel):
     outline_regens: Optional[int] = 0
     draft_regens: Optional[int] = 0
     writing_tips_regens: Optional[int] = 0
+    outline_regenerated_at: Optional[str] = None
+    draft_regenerated_at: Optional[str] = None
+    writing_tips_regenerated_at: Optional[str] = None
+    outline_previous: Optional[str] = None
+    draft_previous: Optional[str] = None
+    writing_tips_previous: Optional[str] = None
     course_materials: List[str] = []
     created_at: str
     updated_at: str
@@ -439,7 +445,7 @@ def _format_specific_brief(assignment: dict) -> str:
                 "  5) Personal response (must be subjective and concrete, not generic)\n"
                 "  6) Conclusion linking back to the listening experience"
             )
-        else:  # multiple_pieces
+        else:
             parts.append(
                 "Structure: MULTIPLE PIECES on one program. Sections:\n"
                 "  1) Concert overview (program order)\n"
@@ -461,6 +467,101 @@ def _format_specific_brief(assignment: dict) -> str:
                 "and chamber-style coordination. Do NOT invent a conductor."
             )
         return "\n".join(parts)
+
+    if fmt == "lab_report":
+        return (
+            "LAB_REPORT MODE\n"
+            "Use scientific IMRaD structure:\n"
+            "  1) Title page note (informational, single line)\n"
+            "  2) Abstract (~150 words: purpose, methods, key result, conclusion)\n"
+            "  3) Introduction (background → hypothesis → why it matters)\n"
+            "  4) Methods (materials, procedure, controls — written so another student could reproduce)\n"
+            "  5) Results (descriptive text + table/figure placeholders; report values and units; no interpretation)\n"
+            "  6) Discussion (compare to hypothesis, explain anomalies, sources of error, limits)\n"
+            "  7) Conclusion (1 paragraph)\n"
+            "  8) References (suggest 3–5 likely sources for the student to verify)\n"
+            "Use passive voice for Methods; active voice for Discussion. Use SI units throughout."
+        )
+
+    if fmt == "literature_review":
+        return (
+            "LITERATURE_REVIEW MODE\n"
+            "Organize THEMATICALLY, NOT one paragraph per paper. Sections:\n"
+            "  1) Introduction (research question / scope / why this review matters)\n"
+            "  2) Methodology of the review (search strategy, databases used, inclusion criteria — even if hypothetical)\n"
+            "  3) Thematic body — group studies by theme/argument. Each theme paragraph should: state the theme, "
+            "     synthesize multiple authors' positions, identify points of consensus vs disagreement, "
+            "     cite ≥3 sources where possible (use placeholder author-year format like (Smith, 2022))\n"
+            "  4) Critical synthesis: gaps, contradictions, methodological weaknesses across the field\n"
+            "  5) Future research directions\n"
+            "  6) Conclusion\n"
+            "Avoid the trap of 'Smith said X. Jones said Y. Lee said Z.' — always synthesize across studies."
+        )
+
+    if fmt == "case_study":
+        return (
+            "CASE_STUDY MODE\n"
+            "Use the analytical case structure:\n"
+            "  1) Executive summary (3–4 sentences)\n"
+            "  2) Background / context (who, where, when, what triggered the situation)\n"
+            "  3) Problem statement (the specific decision or issue to be analyzed)\n"
+            "  4) Analysis using a relevant framework (e.g., SWOT, Porter's Five Forces, PESTEL, "
+            "     stakeholder analysis — choose ONE clearly named framework appropriate to the discipline)\n"
+            "  5) Alternative courses of action (≥2, with pros/cons)\n"
+            "  6) Recommendation with justification\n"
+            "  7) Implementation considerations / risks\n"
+            "Use evidence from the case directly; quote/paraphrase specific facts the student supplied."
+        )
+
+    if fmt in ("masters_thesis", "dissertation"):
+        level = "Master's thesis" if fmt == "masters_thesis" else "Doctoral dissertation"
+        depth = (
+            "Master's-level: ~12,000–25,000 words total. Original contribution should be the application or extension "
+            "of existing theory; defensible methodology over groundbreaking novelty."
+            if fmt == "masters_thesis" else
+            "Doctoral level: 60,000–100,000 words total. MUST demonstrate an original, substantive contribution "
+            "to the field. Methodology rigorous and defensible to viva-level scrutiny."
+        )
+        return (
+            f"{level.upper()} MODE\n"
+            f"{depth}\n"
+            "The OUTLINE must lay out the FULL chapter structure (not just one chapter):\n"
+            "  CH 1. Introduction (problem, aim, objectives, RQs, significance, structure of thesis)\n"
+            "  CH 2. Literature Review (thematic — see LITERATURE_REVIEW MODE structure, but deeper)\n"
+            "  CH 3. Methodology (philosophy/paradigm, approach, design, data collection, analysis, ethics, limitations)\n"
+            "  CH 4. Findings / Results (presentation only, organized by RQ or theme)\n"
+            "  CH 5. Discussion (interpret findings against literature; theoretical & practical implications)\n"
+            "  CH 6. Conclusion (key contributions, limitations, recommendations, future research)\n"
+            "  Appendices placeholder (interview schedules, coding frames, consent forms, etc.)\n"
+            "\n"
+            "The DRAFT should sample ONE representative chapter in depth (default: Chapter 1 Introduction, "
+            "OR the chapter the student names in additional_notes) — written at ~the requested word count — "
+            "showing the academic register, citation density, and argumentative scaffolding the student should match. "
+            "Reference candidate frameworks the student should explore (Saunders' research onion, etc.). "
+            "Use UK or US academic conventions consistently per the writing_style.\n"
+            "\n"
+            "The WRITING_TIPS section MUST include: supervisor-meeting prep checklist, how to keep a research diary, "
+            "viva/defense preparation pointers, plagiarism & AI-disclosure considerations for thesis examination, "
+            "and references-management workflow (Zotero/Mendeley/EndNote)."
+        )
+
+    if fmt == "masters_thesis_proposal":
+        return (
+            "MASTER'S THESIS PROPOSAL MODE\n"
+            "This is the proposal/registration document, NOT the full thesis. Structure:\n"
+            "  1) Title (working title — keep editable)\n"
+            "  2) Background & rationale (~500 words: why this topic, why now, gap)\n"
+            "  3) Aim & Objectives (1 aim, 3–5 objectives)\n"
+            "  4) Research Questions (or hypotheses)\n"
+            "  5) Preliminary literature review (4–6 thematic clusters with key authors)\n"
+            "  6) Proposed methodology (philosophy, approach, design, sampling, data collection, analysis plan, ethics)\n"
+            "  7) Timeline / Gantt-style milestone list\n"
+            "  8) Anticipated contribution & limitations\n"
+            "  9) References (8–15 candidate sources)\n"
+            "Tone: scholarly but provisional ('this study WILL...', not 'this study HAS...'). "
+            "Use future tense for methodology and findings sections."
+        )
+
     return ""
 
 
@@ -711,10 +812,18 @@ Regenerate ONLY the {target_label.upper()} section with a fresh angle. Return JS
             new_text = response.strip() if isinstance(response, str) else ""
 
         regen_field = f"{section}_regens"
+        regen_ts_field = f"{section}_regenerated_at"
+        prev_version_field = f"{section}_previous"
+
+        previous_text = (assignment.get(section) or "")
+        now_iso = datetime.now(timezone.utc).isoformat()
+
         update = {
             section: new_text,
+            prev_version_field: previous_text,
+            regen_ts_field: now_iso,
             "generation_status": "completed",
-            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": now_iso,
         }
         # Rebuild combined content
         outline = new_text if section == "outline" else (assignment.get("outline") or "")

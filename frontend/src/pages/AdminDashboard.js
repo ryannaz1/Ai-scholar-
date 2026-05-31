@@ -106,7 +106,7 @@ const AdminDashboard = () => {
       <div className="min-h-screen bg-paper flex flex-col items-center justify-center p-6">
         <AlertTriangle className="w-12 h-12 text-amber-500 mb-4" />
         <h1 className="text-2xl font-semibold mb-2" style={{ fontFamily: 'Fraunces, serif' }}>Admin only</h1>
-        <p className="text-muted-foreground mb-6">This page is restricted to the Scholar reviewer.</p>
+        <p className="text-muted-foreground mb-6">This page is restricted to the AIScholar reviewer.</p>
         <Button onClick={() => navigate('/dashboard')} className="rounded-sm">Back to dashboard</Button>
       </div>
     );

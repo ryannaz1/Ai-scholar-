@@ -119,7 +119,7 @@ const Dashboard = () => {
           <div className="p-6 border-b border-border">
             <Link to="/" className="flex items-center gap-2" data-testid="dashboard-logo">
               <BookOpen className="w-7 h-7 text-primary" strokeWidth={1.5} />
-              <span className="text-xl font-semibold text-primary" style={{ fontFamily: 'Fraunces, serif' }}>Scholar</span>
+              <span className="text-xl font-semibold text-primary" style={{ fontFamily: 'Fraunces, serif' }}>AIScholar</span>
             </Link>
           </div>
 

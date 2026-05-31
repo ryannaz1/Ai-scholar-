@@ -54,7 +54,7 @@ const LandingPage = () => {
           <div className="flex items-center justify-between h-16">
             <Link to="/" className="flex items-center gap-2" data-testid="logo">
               <BookOpen className="w-7 h-7 text-primary" strokeWidth={1.5} />
-              <span className="text-xl font-semibold text-primary" style={{ fontFamily: 'Fraunces, serif' }}>Scholar</span>
+              <span className="text-xl font-semibold text-primary" style={{ fontFamily: 'Fraunces, serif' }}>AIScholar</span>
             </Link>
             <div className="flex items-center gap-4">
               <Link to="/login">
@@ -78,10 +78,10 @@ const LandingPage = () => {
           <div className="grid lg:grid-cols-2 gap-16 items-center">
             <div className="animate-fade-in-up">
               <h1 className="text-4xl sm:text-5xl lg:text-6xl font-semibold text-foreground leading-tight mb-6" style={{ fontFamily: 'Fraunces, serif' }}>
-                Your Academic Writing <span className="text-accent">Assistant</span>
+                Your AI-Powered <span className="text-accent">Academic Writing Assistant</span>
               </h1>
               <p className="text-base lg:text-lg text-muted-foreground mb-8 max-w-lg">
-                Learn to write better with AI-powered guidance. Get structured outlines, drafts, and feedback tailored to your coursework.
+                The smartest AI essay writer for university students. Get structured outlines, reference drafts, and personalized writing tips for <strong>essays, lab reports, literature reviews, case studies, and Master's thesis chapters</strong>. Powered by GPT-5.2 — built to help you learn, not cheat.
               </p>
               <div className="flex flex-col sm:flex-row gap-4">
                 <Link to="/register">
@@ -112,10 +112,10 @@ const LandingPage = () => {
         <div className="max-w-7xl mx-auto">
           <div className="text-center mb-16">
             <h2 className="text-2xl md:text-3xl font-semibold text-foreground mb-4" style={{ fontFamily: 'Fraunces, serif' }}>
-              Why Choose Scholar?
+              Why Choose AIScholar?
             </h2>
             <p className="text-muted-foreground max-w-2xl mx-auto">
-              A modern approach to academic writing assistance that prioritizes learning and improvement.
+              The most reliable AI academic writing assistant for college and graduate students — from short essays to full Master's thesis outlines.
             </p>
           </div>
           <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-8">
@@ -266,10 +266,10 @@ const LandingPage = () => {
           <div className="flex flex-col md:flex-row justify-between items-center gap-4">
             <div className="flex items-center gap-2">
               <BookOpen className="w-6 h-6" strokeWidth={1.5} />
-              <span className="text-lg font-semibold" style={{ fontFamily: 'Fraunces, serif' }}>Scholar</span>
+              <span className="text-lg font-semibold" style={{ fontFamily: 'Fraunces, serif' }}>AIScholar</span>
             </div>
             <p className="text-sm text-primary-foreground/70">
-              © 2024 Scholar. Academic writing assistance for better learning.
+              © 2026 AIScholar. AI-powered academic writing assistant for essays, lab reports, lit reviews & Master's theses.
             </p>
           </div>
         </div>

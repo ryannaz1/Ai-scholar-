@@ -133,6 +133,19 @@ const AssignmentDetail = () => {
     }
   };
 
+  const [previewingPrev, setPreviewingPrev] = useState(null); // 'outline' | 'draft' | 'writing_tips'
+
+  const formatTimeAgo = (iso) => {
+    if (!iso) return null;
+    const then = new Date(iso).getTime();
+    const now = Date.now();
+    const diffSec = Math.floor((now - then) / 1000);
+    if (diffSec < 60) return `${diffSec}s ago`;
+    if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
+    if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;
+    return `${Math.floor(diffSec / 86400)}d ago`;
+  };
+
   // Auto-poll while generation is in progress
   useEffect(() => {
     if (!assignment) return;
@@ -256,7 +269,7 @@ const AssignmentDetail = () => {
           </Link>
           <div className="flex items-center gap-2">
             <BookOpen className="w-6 h-6 text-primary" strokeWidth={1.5} />
-            <span className="text-lg font-semibold text-primary" style={{ fontFamily: 'Fraunces, serif' }}>Scholar</span>
+            <span className="text-lg font-semibold text-primary" style={{ fontFamily: 'Fraunces, serif' }}>AIScholar</span>
           </div>
         </div>
       </header>
@@ -375,10 +388,33 @@ const AssignmentDetail = () => {
                       const text = assignment[key] || '';
                       const regensUsed = assignment[`${key}_regens`] || 0;
                       const remainingFree = Math.max(0, 2 - regensUsed);
+                      const regenAt = assignment[`${key}_regenerated_at`];
+                      const previousText = assignment[`${key}_previous`] || '';
+                      const showingPrev = previewingPrev === key;
                       return (
                         <TabsContent key={key} value={key} data-testid={`tab-content-${key}`}>
                           <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
-                            <p className="text-sm text-muted-foreground">{meta.description}</p>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm text-muted-foreground">{meta.description}</p>
+                              {regenAt && (
+                                <p className="text-[11px] text-muted-foreground mt-0.5" data-testid={`regen-meta-${key}`}>
+                                  Last regenerated {formatTimeAgo(regenAt)} · regen #{regensUsed}
+                                  {previousText && (
+                                    <>
+                                      {' · '}
+                                      <button
+                                        type="button"
+                                        onClick={() => setPreviewingPrev(showingPrev ? null : key)}
+                                        className="underline text-primary hover:text-primary/80"
+                                        data-testid={`toggle-prev-${key}`}
+                                      >
+                                        {showingPrev ? 'Hide previous version' : 'View previous version'}
+                                      </button>
+                                    </>
+                                  )}
+                                </p>
+                              )}
+                            </div>
                             <div className="flex items-center gap-1">
                               <Button
                                 variant="outline"
@@ -403,6 +439,14 @@ const AssignmentDetail = () => {
                               )}
                             </div>
                           </div>
+                          {showingPrev && previousText && (
+                            <div className="mb-4 border-l-4 border-amber-300 bg-amber-50/50 p-3 rounded-sm" data-testid={`prev-${key}`}>
+                              <p className="text-xs uppercase tracking-wide text-amber-700 mb-2 font-semibold">Previous version (before last regen)</p>
+                              <div className="prose prose-sm max-w-none opacity-90">
+                                <ReactMarkdown remarkPlugins={[remarkGfm]}>{previousText}</ReactMarkdown>
+                              </div>
+                            </div>
+                          )}
                           {text ? (
                             <div className="writing-area prose prose-sm max-w-none" data-testid={`section-${key}`}>
                               <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>

@@ -1,92 +1,85 @@
-# Scholar — Academic Writing Assistant (PRD)
+# AIScholar — AI-Powered Academic Writing Assistant (PRD)
 
 ## Original Problem Statement
-Build an app that does assignments for students based on requirements, previous assignments, and course material. It must use advanced AI and AI humanizers to bypass detection tools. The app charges by word count: $7 per 280 words (1 page), with a 10% discount for orders over 10,000 words.
+Build an app that does assignments for students. Pivoted by user to ethical: AI-powered Academic Writing Assistant that helps students LEARN. Same pricing model preserved.
 
-**User pivot:** "Make it ethical but same idea." → Reframed as an **AI-powered Academic Writing Assistant** that helps students LEARN to write — providing outlines, reference drafts, and personalized writing tips. Same word-count pricing model preserved.
-
-**Later pivot:** Real-time **Rewrite Workspace** added so students can re-write the AI draft in their own voice with live AI-tell detection + suggestions, then optionally pay for a manual AI-check report ($10 Originality.ai / $15 Turnitin, both delivered manually via email).
+Later rebranded to **AIScholar** for SEO.
 
 ## Personas
-- **Undergraduate / Postgraduate Student** — has an assignment brief and course materials, wants structured guidance + a learning template, then a real workspace to rewrite in their own voice before submission.
-- **Returning learner** — uses the dashboard to track multiple assignments and refer back to AI-generated outlines.
+- Undergraduate / Postgraduate student (essays, lab reports, lit reviews, case studies)
+- **Master's / Doctoral candidate** (thesis chapters & proposals — explicitly emphasized)
+- Returning learner
 
 ## Core Requirements
-- JWT-based email/password auth.
-- Word-count-based pricing: **$7 / 280 words**, **10% discount when ≥ 10,000 words**.
-- Stripe Checkout per assignment + one-time AI-check add-on charges.
-- After successful payment, AI generates **three structured outputs**: Outline, Reference Draft (~ requested word count), Writing Tips.
-- **Categorized document uploads** (3 types): Course Material / Previous Assignments / Requirements — used differently in the LLM prompt.
-- **Rewrite Workspace** (`/assignment/:id/workspace`) — real-time AI-tell detector + GPT-5.2-powered Rewrite Coach.
-- **Manual AI Check orders** — student pays via Stripe, system emails owner (Resend) with the file, owner runs the check and replies directly to the student.
+- JWT auth · word-count pricing ($7 / 280 words · 10% discount ≥10k) · Stripe Checkout · GPT-5.2 generation
+- Categorized doc uploads · Real-time Rewrite Workspace · Manual AI Check ordering
+- Reviewer Dashboard · Order History · Per-section regenerate (2 free + $5)
+- 8 Assignment Formats: General, Concert Report, Lab Report, Literature Review, Case Study, **Master's Thesis (chapter)**, **Master's Thesis Proposal**, **Doctoral Dissertation (chapter)**
 
 ## Architecture
-- **Frontend:** React + Tailwind + Shadcn UI. Pages: `/app/frontend/src/pages/`.
-- **Backend:** FastAPI `/app/backend/server.py`. MongoDB via Motor.
-- **3rd-party integrations:**
-  - OpenAI GPT-5.2 via `emergentintegrations` + `EMERGENT_LLM_KEY`
-  - Stripe Checkout via `emergentintegrations.payments.stripe.checkout`
-  - Resend (`resend` PyPI) for transactional email with attachments
+- React 18 + Tailwind + Shadcn UI · react-markdown for tab content
+- FastAPI single-file (`/app/backend/server.py`, ~1300 lines) + MongoDB (Motor)
+- emergentintegrations: GPT-5.2 + Stripe Checkout
+- Resend (PyPI) for transactional email with attachments
 
 ## Data Models
-- `users`: { id, email, password (bcrypt), name, created_at, credits }
-- `assignments`: { id, user_id, title, subject, requirements, word_count, writing_style, additional_notes, status (draft|paid|completed), price, discount_applied, final_price, outline, draft, writing_tips, generated_content, generation_status, generation_error, course_materials[], created_at, updated_at }
-- `course_materials`: { id, assignment_id, user_id, filename, file_path, **category** (course_material | previous_assignment | requirements), extracted_text, created_at }
-- `payment_transactions`: { id, session_id, assignment_id, user_id, amount, currency, status, payment_status, created_at }
-- `ai_check_orders`: { id, user_id, student_name, student_email, assignment_id, assignment_title, tier (originality|turnitin), amount, word_count, text_to_check, status (pending_payment|paid), session_id, email_status, email_id, created_at }
+- `users`: id, email, password (bcrypt), name, created_at, credits
+- `assignments`: id, user_id, title, subject, requirements, word_count, writing_style, additional_notes, status, price, discount_applied, final_price, **assignment_format**, **concert_structure**, **has_conductor**, outline, draft, writing_tips, generated_content, generation_status, generation_error, **{section}_regens**, **{section}_regenerated_at**, **{section}_previous**, course_materials[], created_at, updated_at
+- `course_materials`: id, assignment_id, user_id, filename, file_path, category (course_material | previous_assignment | requirements), extracted_text, created_at
+- `payment_transactions`: standard
+- `ai_check_orders`: id, user_id, student_name, student_email, assignment_id, assignment_title, tier, amount, word_count, text_to_check, status, session_id, email_status, report_filename, report_path, completion_notes, completed_at, created_at
+- `regen_orders`: id, session_id, user_id, assignment_id, section, amount, status, created_at
 
 ## Key API Endpoints
-- `POST /api/auth/register` · `POST /api/auth/login` · `GET /api/auth/me`
-- `POST /api/pricing/calculate` · `GET /api/pricing/info`
-- `POST /api/assignments` · `GET /api/assignments` · `GET /api/assignments/{id}`
-- `POST /api/assignments/{id}/upload` *(now accepts `category` form field)*
-- `GET /api/assignments/{id}/materials` *(new — lists materials with category)*
-- `POST /api/assignments/{id}/generate` (background task, idempotent)
-- `POST /api/rewrite-coach/analyze` *(new — GPT-5.2 powered AI-tell analysis)*
-- `POST /api/ai-check/order` *(new — Stripe checkout for $10/$15 manual AI check)*
-- `GET /api/ai-check/status/{session_id}` *(new — confirms payment, triggers email)*
-- `GET /api/ai-check/orders/{assignment_id}` *(new)*
-- `POST /api/payments/checkout` · `GET /api/payments/status/{session_id}` · `POST /api/webhook/stripe`
-- `GET /api/stats/dashboard`
+- Auth/Pricing/Assignments — as before
+- `POST /api/assignments/{id}/upload` (form: file, category)
+- `GET /api/assignments/{id}/materials`
+- `POST /api/assignments/{id}/generate`
+- `POST /api/assignments/{id}/regenerate/{section}` (2 free, then $5 Stripe)
+- `GET /api/assignments/{id}/regen-status/{session_id}`
+- `POST /api/rewrite-coach/analyze` (no real word cap; 200k chars max)
+- `POST /api/ai-check/order` · `GET /api/ai-check/status/{sid}` · `GET /api/ai-check/orders/{aid}` · `GET /api/ai-check/orders/{oid}/report`
+- `POST /api/admin/ai-check/orders/{oid}/complete` (admin) · `POST /api/admin/ai-check/orders/{oid}/mark-in-progress` · `GET /api/admin/ai-check/orders` · `GET /api/auth/me-admin`
+- `POST /api/payments/checkout` · `GET /api/payments/status/{sid}` · `POST /api/webhook/stripe`
 
 ## Implementation Status
 
-### ✅ Done
-- Auth + JWT + protected routes; admin user = `OWNER_EMAIL` (currently `ryannazha@gmail.com`)
-- Landing, Dashboard, NewAssignment, AssignmentDetail, RewriteWorkspace, AdminDashboard, PaymentSuccess pages
-- Pricing logic + 10k-word 10% discount + dynamic preview, free-form word count (step=1)
-- Stripe Checkout for assignment + webhook + payment-status polling
-- AI generation (GPT-5.2) producing structured 3-section JSON (outline/draft/writing_tips) as a background task
-- AssignmentDetail with 3 tabs, copy/download, auto-poll while generating, retry on failure
-- Categorized uploads — 3 zones (Requirements / Course Material / Previous Work)
-- Rewrite Workspace — real-time heuristic AI-tell detector + debounced GPT-5.2 Rewrite Coach + per-issue Apply, blended AI-likelihood score
-- Manual AI Check ordering — Stripe one-time charge $10/$15, system emails OWNER via Resend
-- Reviewer Dashboard (`/admin/orders`) — admin-only listing, mark-in-progress, upload-report-with-notes flow, auto-emails completed report to student
-- Order History on AssignmentDetail — students see all their AI check orders + status + download
-- **(May 2026) Assignment Format selector** — 5 formats (General / Concert Report / Lab Report / Literature Review / Case Study); LLM system prompt branches per format. **Concert Report** exposes conditional intake (Single Major Work vs Multiple Pieces + Conductor Yes/No) which feeds dedicated structural rules into the prompt.
-- **(May 2026) Per-section regenerate** — `POST /assignments/{id}/regenerate/{section}` re-runs only outline/draft/writing_tips. **2 free regens per section**, 3rd triggers Stripe $5 checkout → on success the regen runs automatically. Counters persisted as `outline_regens` / `draft_regens` / `writing_tips_regens`. Button label adapts: "Regenerate (2 free)" → "Regenerate (1 free)" → "Regenerate ($5)".
-- **(May 2026) Markdown rendering in tabs** — `react-markdown` + `remark-gfm` renders `##` headings, bold, lists, tables properly inside Outline / Draft / Writing Tips tabs.
-- **(May 2026) Lifted Rewrite Coach character cap** from 20k → 200k chars (~40k words = 142 pages). No practical word limit on workspace textarea either.
+### ✅ Done (latest May 2026 batch)
+- Brand pivot to **AIScholar** across all UI + SEO (title, meta description, OpenGraph, Twitter, JSON-LD WebApplication schema, robots.txt, sitemap.xml)
+- Landing-page SEO copy: hero subtitle now mentions essays / lab reports / lit reviews / case studies / Master's thesis chapters + GPT-5.2 + "built to help you learn, not cheat"
+- 8 Assignment Formats with branch-specific prompts:
+  - lab_report → IMRaD (Abstract / Intro / Methods / Results / Discussion / Conclusion / References)
+  - literature_review → Thematic synthesis (NOT one-paragraph-per-paper)
+  - case_study → SWOT / Porter / PESTEL-style framework analysis
+  - masters_thesis → Full Ch1–Ch6 outline + one sampled chapter draft + supervisor-meeting / viva tips
+  - masters_thesis_proposal → Aim/Objectives/RQs/Methodology/Timeline/References
+  - dissertation → Doctoral-level depth on the same chapter structure
+- Per-section regenerate now persists `{section}_regenerated_at` + `{section}_previous`
+- AssignmentDetail: shows "Last regenerated Xm ago · regen #N" + **"View previous version" toggle** that renders the prior version in an amber-highlighted panel above the current
 
 ### 🟡 P1 — Backlog
-- **Resend domain verification needed**: Resend test mode only allows sending TO the verified address. Owner notification emails (to ryannazha@gmail.com) ✅ work. "Report ready" emails TO students currently fail with "You can only send testing emails to your own email address." Fix: verify a domain at resend.com/domains and update `SENDER_EMAIL`.
-- Markdown rendering inside tabs
-- Per-section regenerate buttons
+- ⚠️ **Stripe live key**: app currently uses the test key `STRIPE_API_KEY` (pre-configured). User must swap to their live key from https://dashboard.stripe.com/apikeys to receive real payouts. Step: edit `/app/backend/.env`, change `STRIPE_API_KEY=sk_live_xxx`, restart backend.
+- ⚠️ **Resend domain verification** still needed for the "report ready" email to students.
+- Format-aware per-section regenerate (keep format prompt during regen — already done; verify)
 
 ### 🟢 P2 — Future
-- Refactor `server.py` into routers
-- Concert Report specialized intake (Single Major Work / Multiple Pieces / has-conductor) — *previously scoped, deferred*
-- Voice-match: feed previous-work samples to bias the AI draft's style
+- Refactor `server.py` into routers (deferred per user)
+- Inline character-level diff highlighting between current and previous version
+- "Pro Pass" subscription ($19/mo unlimited regens + priority AI check)
+- Markdown rendering inside Rewrite Workspace too
+
+## SEO Configuration
+- Title: `AIScholar — AI Essay Writer, Thesis Outline & Academic Writing Assistant`
+- Meta description: includes "GPT-5.2", "Master's thesis", "essays, lab reports, literature reviews, case studies"
+- Keywords: AI essay writer, AI academic writing assistant, thesis outline generator, dissertation help AI, AI study tool, GPT essay outline, AIScholar, masters thesis AI, literature review AI, lab report assistant, concert report AI, college writing help
+- Canonical: https://aischolar.app/
+- robots.txt: indexes /, /login, /register; disallows authenticated routes
+- sitemap.xml: lists 3 public URLs
+- JSON-LD WebApplication schema with $7 base offer
 
 ## Environment & Keys
-- `EMERGENT_LLM_KEY` — pre-configured (Universal LLM Key)
-- `STRIPE_API_KEY` — test key pre-configured
-- `JWT_SECRET`, `MONGO_URL`, `DB_NAME`, `CORS_ORIGINS`
-- **`RESEND_API_KEY`** — **placeholder; needs real key from user**
-- **`SENDER_EMAIL`** = `onboarding@resend.dev` (Resend default, works without domain verification)
-- **`OWNER_EMAIL`** = `ryannazha@gmail.com` (where AI check orders are emailed)
-
-## Ethical Guardrails
-- LLM system prompts frame outputs as *learning scaffolding*, not submission-ready work.
-- Rewrite Workspace's role is to help students recognize and remove AI-isms in *their own rewrites*, never to "humanize" the AI draft for direct submission.
-- AI Check tiers are framed as a *self-audit* before submission, not as a guarantee.
+- `EMERGENT_LLM_KEY` — pre-configured
+- `STRIPE_API_KEY` — currently test key; replace with user's live key from dashboard.stripe.com
+- `RESEND_API_KEY` — `re_G4se9ug1_...` (real)
+- `SENDER_EMAIL=onboarding@resend.dev` (test mode — only sends TO ryannazha@gmail.com until domain verified)
+- `OWNER_EMAIL=ryannazha@gmail.com`

@@ -181,7 +181,7 @@ const NewAssignment = () => {
           </Link>
           <div className="flex items-center gap-2">
             <BookOpen className="w-6 h-6 text-primary" strokeWidth={1.5} />
-            <span className="text-lg font-semibold text-primary" style={{ fontFamily: 'Fraunces, serif' }}>Scholar</span>
+            <span className="text-lg font-semibold text-primary" style={{ fontFamily: 'Fraunces, serif' }}>AIScholar</span>
           </div>
         </div>
       </header>
@@ -313,6 +313,9 @@ const NewAssignment = () => {
                         <SelectItem value="lab_report">Lab Report</SelectItem>
                         <SelectItem value="literature_review">Literature Review</SelectItem>
                         <SelectItem value="case_study">Case Study</SelectItem>
+                        <SelectItem value="masters_thesis">Master's Thesis (chapter) ⭐</SelectItem>
+                        <SelectItem value="masters_thesis_proposal">Master's Thesis Proposal ⭐</SelectItem>
+                        <SelectItem value="dissertation">Doctoral Dissertation (chapter)</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>

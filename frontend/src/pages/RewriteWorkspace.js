@@ -280,7 +280,7 @@ const RewriteWorkspace = () => {
           <div className="flex items-center gap-2 flex-1 min-w-0">
             <BookOpen className="w-5 h-5 text-primary flex-shrink-0" strokeWidth={1.5} />
             <span className="text-base font-semibold text-primary truncate" style={{ fontFamily: 'Fraunces, serif' }}>
-              Rewrite Workspace
+              AIScholar
             </span>
             <span className="hidden md:inline text-sm text-muted-foreground truncate"> · {assignment.title}</span>
           </div>
