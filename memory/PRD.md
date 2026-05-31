@@ -58,11 +58,15 @@ Build an app that does assignments for students based on requirements, previous 
 - Stripe Checkout for assignment + webhook + payment-status polling
 - AI generation (GPT-5.2) producing structured 3-section JSON (outline/draft/writing_tips) as a background task
 - AssignmentDetail with 3 tabs, copy/download, auto-poll while generating, retry on failure
-- **(May 2026) Categorized uploads** — 3 zones (Requirements / Course Material / Previous Work)
-- **(May 2026) Rewrite Workspace** — real-time heuristic AI-tell detector + debounced GPT-5.2 Rewrite Coach + per-issue Apply, blended AI-likelihood score
-- **(May 2026) Manual AI Check ordering** — Stripe one-time charge $10/$15, system emails OWNER via Resend with student's text as attachment
-- **(May 2026) Reviewer Dashboard** (`/admin/orders`) — admin-only listing of orders, mark-in-progress, upload-report-with-notes flow, auto-emails completed report to student (✓ in-app PDF download also works)
-- **(May 2026) Order History** on AssignmentDetail — students see all their AI check orders + status + download report when completed
+- Categorized uploads — 3 zones (Requirements / Course Material / Previous Work)
+- Rewrite Workspace — real-time heuristic AI-tell detector + debounced GPT-5.2 Rewrite Coach + per-issue Apply, blended AI-likelihood score
+- Manual AI Check ordering — Stripe one-time charge $10/$15, system emails OWNER via Resend
+- Reviewer Dashboard (`/admin/orders`) — admin-only listing, mark-in-progress, upload-report-with-notes flow, auto-emails completed report to student
+- Order History on AssignmentDetail — students see all their AI check orders + status + download
+- **(May 2026) Assignment Format selector** — 5 formats (General / Concert Report / Lab Report / Literature Review / Case Study); LLM system prompt branches per format. **Concert Report** exposes conditional intake (Single Major Work vs Multiple Pieces + Conductor Yes/No) which feeds dedicated structural rules into the prompt.
+- **(May 2026) Per-section regenerate** — `POST /assignments/{id}/regenerate/{section}` re-runs only outline/draft/writing_tips. **2 free regens per section**, 3rd triggers Stripe $5 checkout → on success the regen runs automatically. Counters persisted as `outline_regens` / `draft_regens` / `writing_tips_regens`. Button label adapts: "Regenerate (2 free)" → "Regenerate (1 free)" → "Regenerate ($5)".
+- **(May 2026) Markdown rendering in tabs** — `react-markdown` + `remark-gfm` renders `##` headings, bold, lists, tables properly inside Outline / Draft / Writing Tips tabs.
+- **(May 2026) Lifted Rewrite Coach character cap** from 20k → 200k chars (~40k words = 142 pages). No practical word limit on workspace textarea either.
 
 ### 🟡 P1 — Backlog
 - **Resend domain verification needed**: Resend test mode only allows sending TO the verified address. Owner notification emails (to ryannazha@gmail.com) ✅ work. "Report ready" emails TO students currently fail with "You can only send testing emails to your own email address." Fix: verify a domain at resend.com/domains and update `SENDER_EMAIL`.

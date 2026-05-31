@@ -31,7 +31,10 @@ const NewAssignment = () => {
     requirements: '',
     word_count: 1000,
     writing_style: 'academic',
-    additional_notes: ''
+    additional_notes: '',
+    assignment_format: 'general',
+    concert_structure: 'single_work',
+    has_conductor: null,
   });
 
   const calculatePrice = (words) => {
@@ -293,6 +296,67 @@ const NewAssignment = () => {
                       </SelectContent>
                     </Select>
                   </div>
+
+                  {/* Assignment Format */}
+                  <div className="space-y-2">
+                    <Label htmlFor="assignment_format">Assignment Format</Label>
+                    <Select
+                      value={formData.assignment_format}
+                      onValueChange={(value) => setFormData(prev => ({ ...prev, assignment_format: value }))}
+                    >
+                      <SelectTrigger className="rounded-sm" data-testid="format-select">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="general">General Academic Essay</SelectItem>
+                        <SelectItem value="concert_report">Concert Report</SelectItem>
+                        <SelectItem value="lab_report">Lab Report</SelectItem>
+                        <SelectItem value="literature_review">Literature Review</SelectItem>
+                        <SelectItem value="case_study">Case Study</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {/* Concert Report — conditional intake */}
+                  {formData.assignment_format === 'concert_report' && (
+                    <div className="space-y-3 p-4 bg-secondary/30 border border-border/40 rounded-sm" data-testid="concert-fields">
+                      <p className="text-sm font-medium" style={{ fontFamily: 'Fraunces, serif' }}>Concert Report Details</p>
+                      <div className="space-y-2">
+                        <Label className="text-sm">Program structure</Label>
+                        <Select
+                          value={formData.concert_structure || 'single_work'}
+                          onValueChange={(value) => setFormData(prev => ({ ...prev, concert_structure: value }))}
+                        >
+                          <SelectTrigger className="rounded-sm" data-testid="concert-structure-select">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="single_work">Single Major Work (one piece in depth)</SelectItem>
+                            <SelectItem value="multiple_pieces">Multiple Pieces (full program)</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label className="text-sm">Conductor present?</Label>
+                        <Select
+                          value={formData.has_conductor === null ? 'unknown' : (formData.has_conductor ? 'yes' : 'no')}
+                          onValueChange={(value) => setFormData(prev => ({
+                            ...prev,
+                            has_conductor: value === 'yes' ? true : value === 'no' ? false : null,
+                          }))}
+                        >
+                          <SelectTrigger className="rounded-sm" data-testid="conductor-select">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="yes">Yes — there's a conductor</SelectItem>
+                            <SelectItem value="no">No — chamber / no conductor</SelectItem>
+                            <SelectItem value="unknown">Not sure / not specified</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Additional Notes */}
                   <div className="space-y-2">

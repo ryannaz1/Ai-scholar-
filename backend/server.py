@@ -80,6 +80,9 @@ class AssignmentCreate(BaseModel):
     word_count: int
     writing_style: Optional[str] = "academic"
     additional_notes: Optional[str] = ""
+    assignment_format: Optional[str] = "general"  # general | concert_report | lab_report | literature_review | case_study
+    concert_structure: Optional[str] = None  # single_work | multiple_pieces
+    has_conductor: Optional[bool] = None
 
 class AssignmentResponse(BaseModel):
     id: str
@@ -100,6 +103,12 @@ class AssignmentResponse(BaseModel):
     writing_tips: Optional[str] = None
     generation_status: Optional[str] = "pending"  # pending | generating | completed | failed
     generation_error: Optional[str] = None
+    assignment_format: Optional[str] = "general"
+    concert_structure: Optional[str] = None
+    has_conductor: Optional[bool] = None
+    outline_regens: Optional[int] = 0
+    draft_regens: Optional[int] = 0
+    writing_tips_regens: Optional[int] = 0
     course_materials: List[str] = []
     created_at: str
     updated_at: str
@@ -298,6 +307,12 @@ async def create_assignment(data: AssignmentCreate, user: dict = Depends(get_cur
         "writing_tips": None,
         "generation_status": "pending",
         "generation_error": None,
+        "assignment_format": data.assignment_format or "general",
+        "concert_structure": data.concert_structure,
+        "has_conductor": data.has_conductor,
+        "outline_regens": 0,
+        "draft_regens": 0,
+        "writing_tips_regens": 0,
         "course_materials": [],
         "created_at": now,
         "updated_at": now
@@ -396,8 +411,57 @@ For every assignment, you produce THREE distinct sections:
 
 3. WRITING_TIPS — Concrete, actionable feedback and learning tips: how to research further, how to refine arguments, common mistakes to avoid, citation guidance, paraphrasing strategy, and specific suggestions to make the draft personal to the student's voice and original analysis.
 
-OUTPUT FORMAT (CRITICAL): Return ONLY a valid JSON object — no markdown fences, no explanations — with exactly these three string keys: "outline", "draft", "writing_tips". Each value must be plain text using \\n for line breaks. Example:
+ADAPT the OUTLINE and DRAFT structure to the assignment_format the user provides:
+- general → standard intro / body / conclusion academic essay
+- lab_report → Abstract / Introduction / Methods / Results / Discussion / Conclusion / References
+- literature_review → Introduction / Thematic synthesis (organized by themes, NOT one paper per paragraph) / Gaps & Future research / Conclusion
+- case_study → Background / Problem / Analysis / Recommendation / Implementation considerations
+- concert_report → see CONCERT_REPORT block in the user prompt for structure variations
+
+OUTPUT FORMAT (CRITICAL): Return ONLY a valid JSON object — no markdown fences, no explanations — with exactly these three string keys: "outline", "draft", "writing_tips". Each value must be plain text (markdown headings like ## allowed) using \\n for line breaks. Example:
 {"outline": "...", "draft": "...", "writing_tips": "..."}"""
+
+
+def _format_specific_brief(assignment: dict) -> str:
+    """Return extra instructions appended to the user prompt based on assignment_format."""
+    fmt = (assignment.get("assignment_format") or "general").lower()
+    if fmt == "concert_report":
+        structure = (assignment.get("concert_structure") or "single_work").lower()
+        has_conductor = assignment.get("has_conductor")
+        parts = ["CONCERT_REPORT MODE"]
+        if structure == "single_work":
+            parts.append(
+                "Structure: ONE major work in depth. Sections to cover in BOTH outline and draft:\n"
+                "  1) Concert overview (date, venue, ensemble, performer(s)) — keep brief\n"
+                "  2) Composer & work context (era, style, historical placement)\n"
+                "  3) Movement-by-movement analysis (form, harmonic language, thematic development)\n"
+                "  4) Interpretation in performance (tempi, dynamics, phrasing choices)\n"
+                "  5) Personal response (must be subjective and concrete, not generic)\n"
+                "  6) Conclusion linking back to the listening experience"
+            )
+        else:  # multiple_pieces
+            parts.append(
+                "Structure: MULTIPLE PIECES on one program. Sections:\n"
+                "  1) Concert overview (program order)\n"
+                "  2) Brief context per piece (composer, work, why on this program)\n"
+                "  3) Analysis of EACH piece (1–2 paragraphs each — do not over-template; vary length by significance)\n"
+                "  4) Synthesis: how the pieces conversed with each other (thematic / stylistic juxtaposition)\n"
+                "  5) Personal response\n"
+                "  6) Conclusion"
+            )
+        if has_conductor is True:
+            parts.append(
+                "Conductor present: discuss interpretive choices — tempo decisions, dynamic shaping, baton-led ensemble cohesion, "
+                "and how their gestural vocabulary affected expression. Name the conductor if provided."
+            )
+        elif has_conductor is False:
+            parts.append(
+                "No conductor (chamber / orchestra-without-conductor): focus on ensemble communication, "
+                "leadership from concertmaster/section principals, eye contact, breathing as unified cues, "
+                "and chamber-style coordination. Do NOT invent a conductor."
+            )
+        return "\n".join(parts)
+    return ""
 
 
 def _parse_ai_json(raw: str) -> dict:
@@ -467,10 +531,13 @@ async def run_generation(assignment_id: str):
         user_prompt = f"""Assignment Details:
 Title: {assignment['title']}
 Subject: {assignment['subject']}
+Format: {assignment.get('assignment_format', 'general')}
 Requirements: {assignment['requirements']}
 Word Count Target: {assignment['word_count']} words (this applies to the DRAFT section only)
 Writing Style: {assignment['writing_style']}
 Additional Notes: {assignment.get('additional_notes', '')}
+
+{_format_specific_brief(assignment)}
 
 {materials_context if materials_context else "No supplemental materials provided."}
 
@@ -563,6 +630,237 @@ async def generate_content(
         {"$set": {"generation_status": "generating", "generation_error": None}}
     )
     return {"status": "generating", "message": "Generation started"}
+
+
+# ---------- Per-section regenerate (2 free, then $5) ----------
+
+FREE_REGENS_PER_SECTION = 2
+REGEN_PRICE = 5.0
+VALID_SECTIONS = ("outline", "draft", "writing_tips")
+
+SECTION_LABELS = {"outline": "Outline", "draft": "Draft", "writing_tips": "Writing Tips"}
+
+
+async def run_section_regeneration(assignment_id: str, section: str):
+    """Background task: regenerate ONE section, preserving the others."""
+    try:
+        assignment = await db.assignments.find_one({"id": assignment_id}, {"_id": 0})
+        if not assignment:
+            return
+        await db.assignments.update_one(
+            {"id": assignment_id},
+            {"$set": {"generation_status": "generating", "generation_error": None}}
+        )
+
+        materials = await db.course_materials.find(
+            {"assignment_id": assignment_id},
+            {"_id": 0, "extracted_text": 1, "filename": 1, "category": 1}
+        ).to_list(20)
+        grouped = {"course_material": [], "previous_assignment": [], "requirements": []}
+        for m in materials:
+            cat = m.get("category") or "course_material"
+            if cat not in grouped:
+                cat = "course_material"
+            grouped[cat].append(m)
+        materials_context = "\n\n".join(
+            f"[{m['filename']}] {m['extracted_text'][:6000]}"
+            for cat in grouped for m in grouped[cat]
+        )
+
+        keep = {k: assignment.get(k) or "" for k in VALID_SECTIONS if k != section}
+        target_label = SECTION_LABELS[section]
+
+        regen_system = (
+            "You are Scholar, an ethical academic writing tutor. "
+            f"The student has asked you to REGENERATE just the {target_label.upper()} section of their learning materials, "
+            "keeping the other sections consistent with this regeneration. "
+            "Take a meaningfully different angle from the previous version (different structure, new examples, alternative framing) "
+            "while still satisfying the assignment requirements. "
+            'Return ONLY a JSON object with one key: {"' + section + '": "..."}'
+        )
+
+        regen_user = f"""Assignment Details:
+Title: {assignment['title']}
+Subject: {assignment['subject']}
+Format: {assignment.get('assignment_format', 'general')}
+Requirements: {assignment['requirements']}
+Word Count Target: {assignment['word_count']} words (applies to DRAFT only)
+Writing Style: {assignment['writing_style']}
+Additional Notes: {assignment.get('additional_notes', '')}
+
+{_format_specific_brief(assignment)}
+
+EXISTING SECTIONS (for consistency — do NOT regenerate these):
+""" + "\n\n".join([f"--- {SECTION_LABELS[k].upper()} ---\n{v[:5000]}" for k, v in keep.items() if v]) + f"""
+
+{materials_context[:12000] if materials_context else ''}
+
+Regenerate ONLY the {target_label.upper()} section with a fresh angle. Return JSON with the single key "{section}"."""
+
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+        api_key = os.environ.get('EMERGENT_LLM_KEY')
+        chat = LlmChat(
+            api_key=api_key,
+            session_id=f"regen-{assignment_id}-{section}-{uuid.uuid4().hex[:6]}",
+            system_message=regen_system
+        ).with_model("openai", "gpt-5.2")
+        response = await chat.send_message(UserMessage(text=regen_user))
+        parsed = _parse_ai_json(response)
+        new_text = (parsed.get(section, "") or "").strip()
+        if not new_text:
+            new_text = response.strip() if isinstance(response, str) else ""
+
+        regen_field = f"{section}_regens"
+        update = {
+            section: new_text,
+            "generation_status": "completed",
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        # Rebuild combined content
+        outline = new_text if section == "outline" else (assignment.get("outline") or "")
+        draft = new_text if section == "draft" else (assignment.get("draft") or "")
+        writing_tips = new_text if section == "writing_tips" else (assignment.get("writing_tips") or "")
+        update["generated_content"] = f"# Outline\n\n{outline}\n\n# Draft\n\n{draft}\n\n# Writing Tips\n\n{writing_tips}"
+
+        await db.assignments.update_one(
+            {"id": assignment_id},
+            {"$set": update, "$inc": {regen_field: 1}}
+        )
+        logger.info(f"Section regenerated: {assignment_id} / {section}")
+    except Exception as e:
+        logger.exception(f"Regen failed {assignment_id}/{section}: {e}")
+        await db.assignments.update_one(
+            {"id": assignment_id},
+            {"$set": {"generation_status": "failed", "generation_error": str(e)[:300]}}
+        )
+
+
+class RegenerateResponse(BaseModel):
+    status: str  # "regenerating" | "payment_required"
+    remaining_free: int
+    checkout_url: Optional[str] = None
+    session_id: Optional[str] = None
+
+
+@api_router.post("/assignments/{assignment_id}/regenerate/{section}", response_model=RegenerateResponse)
+async def regenerate_section(
+    assignment_id: str,
+    section: str,
+    background_tasks: BackgroundTasks,
+    request: Request,
+    origin_url: Optional[str] = Body(None, embed=True),
+    user: dict = Depends(get_current_user),
+):
+    if section not in VALID_SECTIONS:
+        raise HTTPException(status_code=400, detail="Invalid section")
+    assignment = await db.assignments.find_one(
+        {"id": assignment_id, "user_id": user["id"]}, {"_id": 0}
+    )
+    if not assignment:
+        raise HTTPException(status_code=404, detail="Assignment not found")
+    if assignment["status"] not in ("paid", "completed"):
+        raise HTTPException(status_code=400, detail="Pay for the assignment first")
+    if assignment.get("generation_status") == "generating":
+        return RegenerateResponse(status="regenerating", remaining_free=0)
+
+    regen_field = f"{section}_regens"
+    used = int(assignment.get(regen_field) or 0)
+    remaining_free = max(0, FREE_REGENS_PER_SECTION - used)
+
+    if remaining_free > 0:
+        # Free regen
+        await db.assignments.update_one(
+            {"id": assignment_id},
+            {"$set": {"generation_status": "generating"}}
+        )
+        background_tasks.add_task(run_section_regeneration, assignment_id, section)
+        return RegenerateResponse(status="regenerating", remaining_free=remaining_free - 1)
+
+    # Paid regen — create Stripe checkout
+    try:
+        from emergentintegrations.payments.stripe.checkout import (
+            StripeCheckout, CheckoutSessionRequest, CheckoutSessionResponse
+        )
+        stripe_api_key = os.environ.get('STRIPE_API_KEY')
+        host_url = str(request.base_url).rstrip('/')
+        webhook_url = f"{host_url}/api/webhook/stripe"
+        stripe_checkout = StripeCheckout(api_key=stripe_api_key, webhook_url=webhook_url)
+        origin = (origin_url or "").rstrip('/') or str(request.base_url).rstrip('/')
+        success_url = f"{origin}/assignment/{assignment_id}?regen_session={{CHECKOUT_SESSION_ID}}"
+        cancel_url = f"{origin}/assignment/{assignment_id}"
+
+        checkout_request = CheckoutSessionRequest(
+            amount=REGEN_PRICE,
+            currency="usd",
+            success_url=success_url,
+            cancel_url=cancel_url,
+            metadata={
+                "purpose": "regen",
+                "assignment_id": assignment_id,
+                "section": section,
+                "user_id": user["id"],
+            },
+        )
+        session: CheckoutSessionResponse = await stripe_checkout.create_checkout_session(checkout_request)
+        # Persist pending regen
+        await db.regen_orders.insert_one({
+            "id": str(uuid.uuid4()),
+            "session_id": session.session_id,
+            "user_id": user["id"],
+            "assignment_id": assignment_id,
+            "section": section,
+            "amount": REGEN_PRICE,
+            "status": "pending_payment",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+        return RegenerateResponse(
+            status="payment_required",
+            remaining_free=0,
+            checkout_url=session.url,
+            session_id=session.session_id,
+        )
+    except Exception as e:
+        logger.exception(f"Regen checkout failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Could not start checkout: {str(e)}")
+
+
+@api_router.get("/assignments/{assignment_id}/regen-status/{session_id}")
+async def regen_status(
+    assignment_id: str,
+    session_id: str,
+    background_tasks: BackgroundTasks,
+    user: dict = Depends(get_current_user),
+):
+    order = await db.regen_orders.find_one(
+        {"session_id": session_id, "user_id": user["id"]}, {"_id": 0}
+    )
+    if not order:
+        raise HTTPException(status_code=404, detail="Regen order not found")
+    if order["status"] == "completed":
+        return {"status": "already_processed"}
+    try:
+        from emergentintegrations.payments.stripe.checkout import StripeCheckout
+        stripe_checkout = StripeCheckout(
+            api_key=os.environ.get('STRIPE_API_KEY'), webhook_url=""
+        )
+        stripe_status = await stripe_checkout.get_checkout_status(session_id)
+        if stripe_status.payment_status == "paid":
+            await db.regen_orders.update_one(
+                {"session_id": session_id},
+                {"$set": {"status": "completed", "paid_at": datetime.now(timezone.utc).isoformat()}}
+            )
+            # Allow one paid regen by NOT incrementing free counter; bump the regen field is done by the task itself
+            await db.assignments.update_one(
+                {"id": assignment_id},
+                {"$set": {"generation_status": "generating"}}
+            )
+            background_tasks.add_task(run_section_regeneration, assignment_id, order["section"])
+            return {"status": "regenerating", "section": order["section"]}
+        return {"status": stripe_status.payment_status}
+    except Exception as e:
+        logger.exception(f"Regen status check failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # ==================== PAYMENT ROUTES ====================
 
@@ -752,8 +1050,9 @@ async def rewrite_coach_analyze(data: RewriteAnalyzeRequest, user: dict = Depend
     text = (data.text or "").strip()
     if not text:
         raise HTTPException(status_code=400, detail="Text is required")
-    if len(text) > 20000:
-        text = text[:20000]
+    # No hard word cap — cap at 200k chars (~40k words) only to avoid token blow-ups
+    if len(text) > 200000:
+        text = text[:200000]
     try:
         from emergentintegrations.llm.chat import LlmChat, UserMessage
         api_key = os.environ.get('EMERGENT_LLM_KEY')

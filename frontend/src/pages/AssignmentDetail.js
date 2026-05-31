@@ -9,6 +9,8 @@ import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import axios from 'axios';
 import { toast } from 'sonner';
 
@@ -30,6 +32,7 @@ const AssignmentDetail = () => {
   const [paying, setPaying] = useState(false);
   const [activeTab, setActiveTab] = useState('outline');
   const [aiCheckOrders, setAiCheckOrders] = useState([]);
+  const [regenerating, setRegenerating] = useState(false);
   const pollTimerRef = useRef(null);
 
   useEffect(() => {
@@ -44,23 +47,64 @@ const AssignmentDetail = () => {
   // If returning from Stripe with ai_check_session, confirm payment & refresh
   useEffect(() => {
     const sess = searchParams.get('ai_check_session');
-    if (!sess) return;
-    (async () => {
-      try {
-        const res = await axios.get(`${API}/ai-check/status/${sess}`);
-        if (res.data.status === 'paid') {
-          toast.success('AI check order received — we\'ll email you the report within 24 h.');
+    const regenSess = searchParams.get('regen_session');
+    if (sess) {
+      (async () => {
+        try {
+          const res = await axios.get(`${API}/ai-check/status/${sess}`);
+          if (res.data.status === 'paid') {
+            toast.success('AI check order received — we\'ll email you the report within 24 h.');
+          }
+        } catch (e) {/* silent */}
+        finally {
+          searchParams.delete('ai_check_session');
+          setSearchParams(searchParams, { replace: true });
+          fetchAiCheckOrders();
         }
-      } catch (e) {
-        // silent
-      } finally {
-        searchParams.delete('ai_check_session');
-        setSearchParams(searchParams, { replace: true });
-        fetchAiCheckOrders();
-      }
-    })();
+      })();
+    }
+    if (regenSess) {
+      (async () => {
+        try {
+          const res = await axios.get(`${API}/assignments/${id}/regen-status/${regenSess}`);
+          if (res.data.status === 'regenerating') {
+            toast.success(`Payment received — regenerating ${res.data.section}…`);
+            setRegenerating(true);
+          }
+        } catch (e) {/* silent */}
+        finally {
+          searchParams.delete('regen_session');
+          setSearchParams(searchParams, { replace: true });
+          fetchAssignment();
+        }
+      })();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
+
+  const handleRegenerate = async (section) => {
+    setRegenerating(true);
+    try {
+      const res = await axios.post(`${API}/assignments/${id}/regenerate/${section}`, {
+        origin_url: window.location.origin,
+      });
+      if (res.data.status === 'payment_required' && res.data.checkout_url) {
+        toast.info('Redirecting to checkout — $5 for this regeneration.');
+        window.location.href = res.data.checkout_url;
+        return;
+      }
+      if (res.data.status === 'regenerating') {
+        toast.success(`Regenerating ${section.replace('_', ' ')}… ${res.data.remaining_free} free regen(s) remaining after this.`);
+        // Trigger poll loop
+        setTimeout(fetchAssignment, 3000);
+      }
+    } catch (e) {
+      toast.error(e.response?.data?.detail || 'Regenerate failed');
+    } finally {
+      // Will be cleared when generation_status transitions back to completed
+      setTimeout(() => setRegenerating(false), 1500);
+    }
+  };
 
   const fetchAiCheckOrders = async () => {
     try {
@@ -329,24 +373,39 @@ const AssignmentDetail = () => {
 
                     {Object.entries(SECTION_META).map(([key, meta]) => {
                       const text = assignment[key] || '';
+                      const regensUsed = assignment[`${key}_regens`] || 0;
+                      const remainingFree = Math.max(0, 2 - regensUsed);
                       return (
                         <TabsContent key={key} value={key} data-testid={`tab-content-${key}`}>
-                          <div className="flex items-center justify-between mb-3">
+                          <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
                             <p className="text-sm text-muted-foreground">{meta.description}</p>
-                            {text && (
+                            <div className="flex items-center gap-1">
                               <Button
-                                variant="ghost"
+                                variant="outline"
                                 size="sm"
-                                onClick={() => copySection(text, meta.label)}
-                                data-testid={`copy-${key}-btn`}
+                                onClick={() => handleRegenerate(key)}
+                                disabled={regenerating || isGenerating}
+                                data-testid={`regen-${key}-btn`}
+                                title={remainingFree > 0 ? `${remainingFree} free regen(s) left` : 'Next regen costs $5'}
                               >
-                                <Copy className="w-4 h-4 mr-1" /> Copy
+                                {regenerating ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-1" />}
+                                {remainingFree > 0 ? `Regenerate (${remainingFree} free)` : 'Regenerate ($5)'}
                               </Button>
-                            )}
+                              {text && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => copySection(text, meta.label)}
+                                  data-testid={`copy-${key}-btn`}
+                                >
+                                  <Copy className="w-4 h-4 mr-1" /> Copy
+                                </Button>
+                              )}
+                            </div>
                           </div>
                           {text ? (
-                            <div className="writing-area prose prose-sm max-w-none whitespace-pre-wrap" data-testid={`section-${key}`}>
-                              {text}
+                            <div className="writing-area prose prose-sm max-w-none" data-testid={`section-${key}`}>
+                              <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
                             </div>
                           ) : (
                             <p className="text-sm text-muted-foreground italic">No {meta.label.toLowerCase()} available.</p>
