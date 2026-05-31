@@ -1,25 +1,25 @@
 # Test Credentials — Scholar
 
-No fixed seed account. The app uses dynamic email/password registration.
-
-## How to test auth
-1. Register via `POST /api/auth/register` with any unique email + password (≥ 6 chars), name.
-2. Login at `POST /api/auth/login` with the same email/password.
-
-## Suggested test account (create on first run if needed)
-- Email: `tester+scholar@example.com`
+## Admin / Reviewer account
+- Email: `ryannazha@gmail.com`
 - Password: `Test1234!`
-- Name: `Scholar Tester`
+- Role: **Admin** (matches `OWNER_EMAIL` env var → unlocks `/admin/orders` and admin endpoints)
+
+## Student test accounts
+No fixed seed. Register dynamically with any unique email + password ≥ 6 chars.
 
 ## Stripe
-Uses `STRIPE_API_KEY=sk_test_emergent` (pre-configured test key). Use Stripe test card `4242 4242 4242 4242`, any future expiry, any 3-digit CVC, any ZIP.
+Uses `STRIPE_API_KEY=sk_test_emergent` (pre-configured test key). Test card `4242 4242 4242 4242`, any future expiry, any 3-digit CVC.
 
 ## AI Generation
-Uses `EMERGENT_LLM_KEY` (pre-configured). Model: `openai/gpt-5.2` via `emergentintegrations`.
+`EMERGENT_LLM_KEY` (pre-configured). Model: `openai/gpt-5.2`.
 
-## Bypass payment in tests
-To skip Stripe in backend tests, mark an assignment paid directly in MongoDB:
+## Email
+Resend API key configured (`re_G4se9ug1_...`). Sending FROM `onboarding@resend.dev`.
+**Note:** Resend test mode only allows sending TO `ryannazha@gmail.com`. Verify a domain at resend.com/domains to send to actual student emails.
+
+## Bypass Stripe in backend tests
 ```js
 db.assignments.updateOne({id:'<assignment_id>'}, {$set:{status:'paid'}})
+db.ai_check_orders.updateOne({id:'<order_id>'}, {$set:{status:'paid'}})
 ```
-Then `POST /api/assignments/{id}/generate` triggers background generation.

@@ -12,6 +12,7 @@ import Dashboard from "./pages/Dashboard";
 import NewAssignment from "./pages/NewAssignment";
 import AssignmentDetail from "./pages/AssignmentDetail";
 import RewriteWorkspace from "./pages/RewriteWorkspace";
+import AdminDashboard from "./pages/AdminDashboard";
 import PaymentSuccess from "./pages/PaymentSuccess";
 
 // Protected Route Component
@@ -106,6 +107,14 @@ function App() {
             element={
               <ProtectedRoute>
                 <RewriteWorkspace />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/orders"
+            element={
+              <ProtectedRoute>
+                <AdminDashboard />
               </ProtectedRoute>
             }
           />

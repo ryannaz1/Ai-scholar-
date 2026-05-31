@@ -52,27 +52,22 @@ Build an app that does assignments for students based on requirements, previous 
 ## Implementation Status
 
 ### ✅ Done
-- Auth + JWT + protected routes
-- Landing, Dashboard, NewAssignment, AssignmentDetail, PaymentSuccess pages
+- Auth + JWT + protected routes; admin user = `OWNER_EMAIL` (currently `ryannazha@gmail.com`)
+- Landing, Dashboard, NewAssignment, AssignmentDetail, RewriteWorkspace, AdminDashboard, PaymentSuccess pages
 - Pricing logic + 10k-word 10% discount + dynamic preview, free-form word count (step=1)
 - Stripe Checkout for assignment + webhook + payment-status polling
 - AI generation (GPT-5.2) producing structured 3-section JSON (outline/draft/writing_tips) as a background task
 - AssignmentDetail with 3 tabs, copy/download, auto-poll while generating, retry on failure
-- **(May 2026) Categorized uploads** — 3 zones in NewAssignment (Requirements / Course Material / Previous Work), tagged in DB, used by LLM prompt with distinct instructions per category
-- **(May 2026) Rewrite Workspace** — new route `/assignment/:id/workspace`:
-  - Live heuristic AI-tell detector (clichés, hedges, em-dash density, sentence uniformity)
-  - Inline rose-underline highlights on the textarea
-  - Debounced GPT-5.2 "Rewrite Coach" (auto every 1.8s OR manual "Deep analyze")
-  - Per-issue Apply button for one-click suggestion swap
-  - Real-time AI-likelihood score (heuristic + LLM blended)
-- **(May 2026) Manual AI Check ordering** — Stripe one-time charge $10 (Originality.ai) / $15 (Turnitin), system emails `OWNER_EMAIL` via Resend with the student's submitted text as attachment, owner replies directly to student
+- **(May 2026) Categorized uploads** — 3 zones (Requirements / Course Material / Previous Work)
+- **(May 2026) Rewrite Workspace** — real-time heuristic AI-tell detector + debounced GPT-5.2 Rewrite Coach + per-issue Apply, blended AI-likelihood score
+- **(May 2026) Manual AI Check ordering** — Stripe one-time charge $10/$15, system emails OWNER via Resend with student's text as attachment
+- **(May 2026) Reviewer Dashboard** (`/admin/orders`) — admin-only listing of orders, mark-in-progress, upload-report-with-notes flow, auto-emails completed report to student (✓ in-app PDF download also works)
+- **(May 2026) Order History** on AssignmentDetail — students see all their AI check orders + status + download report when completed
 
 ### 🟡 P1 — Backlog
-- ⚠️ **Resend API key is a placeholder** in `.env` — user must add real key from https://resend.com → emails currently no-op (logged as `email_status=skipped_no_key`)
+- **Resend domain verification needed**: Resend test mode only allows sending TO the verified address. Owner notification emails (to ryannazha@gmail.com) ✅ work. "Report ready" emails TO students currently fail with "You can only send testing emails to your own email address." Fix: verify a domain at resend.com/domains and update `SENDER_EMAIL`.
 - Markdown rendering inside tabs
 - Per-section regenerate buttons
-- Order history page for AI check orders
-- Display past AI-check order status on AssignmentDetail
 
 ### 🟢 P2 — Future
 - Refactor `server.py` into routers

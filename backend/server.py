@@ -993,6 +993,172 @@ async def list_ai_check_orders(assignment_id: str, user: dict = Depends(get_curr
     return docs
 
 
+# ----- Student: download completed report -----
+
+@api_router.get("/ai-check/orders/{order_id}/report")
+async def download_ai_check_report(order_id: str, user: dict = Depends(get_current_user)):
+    order = await db.ai_check_orders.find_one(
+        {"id": order_id, "user_id": user["id"]}, {"_id": 0}
+    )
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if order.get("status") != "completed" or not order.get("report_path"):
+        raise HTTPException(status_code=400, detail="Report not ready yet")
+    report_path = Path(order["report_path"])
+    if not report_path.exists():
+        raise HTTPException(status_code=404, detail="Report file missing")
+    from fastapi.responses import FileResponse
+    return FileResponse(
+        path=str(report_path),
+        filename=order.get("report_filename", "ai_check_report.pdf"),
+        media_type="application/octet-stream"
+    )
+
+
+# ----- Admin (reviewer) endpoints -----
+
+def is_admin(user: dict) -> bool:
+    owner = (os.environ.get("OWNER_EMAIL") or "").strip().lower()
+    return bool(owner) and user.get("email", "").lower() == owner
+
+async def require_admin(user: dict = Depends(get_current_user)):
+    if not is_admin(user):
+        raise HTTPException(status_code=403, detail="Admin only")
+    return user
+
+
+@api_router.get("/admin/ai-check/orders")
+async def admin_list_all_orders(
+    status_filter: Optional[str] = None,
+    _admin: dict = Depends(require_admin),
+):
+    query = {}
+    if status_filter:
+        query["status"] = status_filter
+    docs = await db.ai_check_orders.find(
+        query, {"_id": 0}
+    ).sort("created_at", -1).to_list(200)
+    return docs
+
+
+@api_router.get("/admin/ai-check/orders/{order_id}")
+async def admin_get_order(order_id: str, _admin: dict = Depends(require_admin)):
+    order = await db.ai_check_orders.find_one({"id": order_id}, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    return order
+
+
+async def send_report_ready_email(order_id: str):
+    """Notify the student that their report is ready, attaching the PDF."""
+    try:
+        order = await db.ai_check_orders.find_one({"id": order_id}, {"_id": 0})
+        if not order:
+            return
+        api_key = os.environ.get("RESEND_API_KEY")
+        sender = os.environ.get("SENDER_EMAIL", "onboarding@resend.dev")
+        if not api_key or api_key.startswith("re_placeholder"):
+            logger.warning(f"Resend not configured; skipping completion email for {order_id}")
+            return
+        resend.api_key = api_key
+
+        tier_label = "Turnitin" if order["tier"] == "turnitin" else "Originality.ai"
+        report_path = Path(order.get("report_path", ""))
+        attachments = []
+        if report_path.exists():
+            import base64
+            with open(report_path, "rb") as f:
+                attachments.append({
+                    "filename": order.get("report_filename", "report.pdf"),
+                    "content": base64.b64encode(f.read()).decode("ascii"),
+                })
+
+        notes = order.get("completion_notes") or ""
+        notes_html = f'<p style="background:#fafafa;padding:12px;border-left:3px solid #1a2842;">{notes}</p>' if notes else ""
+
+        html = f"""
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #1a2842;">Your {tier_label} report is ready</h2>
+          <p>Hi {order.get('student_name','')},</p>
+          <p>Your AI-check report for <b>{order.get('assignment_title','')}</b> has been completed.
+             The full report is attached as a PDF.</p>
+          {notes_html}
+          <p style="color:#666; font-size: 12px; margin-top: 24px;">— Scholar Reviewer Team</p>
+        </div>
+        """
+
+        params = {
+            "from": sender,
+            "to": [order["student_email"]],
+            "subject": f"Your {tier_label} report — {order.get('assignment_title','')}",
+            "html": html,
+            "attachments": attachments,
+        }
+        email = await asyncio.to_thread(resend.Emails.send, params)
+        logger.info(f"Report-ready email sent for order {order_id}: {email}")
+    except Exception as e:
+        logger.exception(f"Failed sending report-ready email for {order_id}: {e}")
+
+
+@api_router.post("/admin/ai-check/orders/{order_id}/complete")
+async def admin_complete_order(
+    order_id: str,
+    background_tasks: BackgroundTasks,
+    report: UploadFile = File(...),
+    notes: str = Form(""),
+    _admin: dict = Depends(require_admin),
+):
+    order = await db.ai_check_orders.find_one({"id": order_id}, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if order.get("status") not in ("paid", "in_progress"):
+        raise HTTPException(status_code=400, detail=f"Order not in paid state (current: {order.get('status')})")
+
+    # Save report file
+    file_ext = Path(report.filename or "report.pdf").suffix.lower() or ".pdf"
+    if file_ext not in [".pdf", ".docx", ".doc", ".txt"]:
+        raise HTTPException(status_code=400, detail="Report must be PDF, DOCX, DOC, or TXT")
+    content = await report.read()
+    if len(content) > 25 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Report too large (max 25MB)")
+
+    report_id = str(uuid.uuid4())
+    saved_path = UPLOAD_DIR / f"report_{order_id}_{report_id}{file_ext}"
+    async with aiofiles.open(saved_path, "wb") as f:
+        await f.write(content)
+
+    now = datetime.now(timezone.utc).isoformat()
+    await db.ai_check_orders.update_one(
+        {"id": order_id},
+        {"$set": {
+            "status": "completed",
+            "report_filename": report.filename or f"report{file_ext}",
+            "report_path": str(saved_path),
+            "completion_notes": notes,
+            "completed_at": now,
+        }}
+    )
+
+    background_tasks.add_task(send_report_ready_email, order_id)
+    return {"status": "completed", "order_id": order_id, "email": "queued"}
+
+
+@api_router.post("/admin/ai-check/orders/{order_id}/mark-in-progress")
+async def admin_mark_in_progress(order_id: str, _admin: dict = Depends(require_admin)):
+    res = await db.ai_check_orders.update_one(
+        {"id": order_id, "status": "paid"},
+        {"$set": {"status": "in_progress"}}
+    )
+    if res.matched_count == 0:
+        raise HTTPException(status_code=400, detail="Order not in paid state")
+    return {"status": "in_progress"}
+
+
+@api_router.get("/auth/me-admin")
+async def me_admin(user: dict = Depends(get_current_user)):
+    return {"is_admin": is_admin(user), "email": user.get("email")}
+
+
 # ==================== STATS ROUTES ====================
 
 @api_router.get("/stats/dashboard")

@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { 
   BookOpen, Plus, FileText, Clock, DollarSign, 
   BarChart3, LogOut, Menu, X, ChevronRight,
-  Sparkles, CheckCircle, AlertCircle
+  Sparkles, CheckCircle, AlertCircle, ShieldCheck
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
@@ -22,10 +22,21 @@ const Dashboard = () => {
   const [stats, setStats] = useState(null);
   const [assignments, setAssignments] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
     fetchData();
+    fetchAdminStatus();
   }, []);
+
+  const fetchAdminStatus = async () => {
+    try {
+      const res = await axios.get(`${API}/auth/me-admin`);
+      setIsAdmin(!!res.data.is_admin);
+    } catch (e) {
+      setIsAdmin(false);
+    }
+  };
 
   const fetchData = async () => {
     try {
@@ -130,6 +141,16 @@ const Dashboard = () => {
               <Plus className="w-5 h-5" strokeWidth={1.5} />
               New Assignment
             </Link>
+            {isAdmin && (
+              <Link
+                to="/admin/orders"
+                className="flex items-center gap-3 px-4 py-3 rounded-sm hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors"
+                data-testid="nav-admin"
+              >
+                <ShieldCheck className="w-5 h-5" strokeWidth={1.5} />
+                Reviewer Inbox
+              </Link>
+            )}
           </nav>
 
           {/* User */}

@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Link, useParams, useNavigate } from 'react-router-dom';
+import { Link, useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   BookOpen, ArrowLeft, CreditCard, Loader2,
   Download, Sparkles, CheckCircle, Clock,
-  Copy, AlertCircle, ListTree, FileText, Lightbulb, RefreshCw, Wand2
+  Copy, AlertCircle, ListTree, FileText, Lightbulb, RefreshCw, Wand2, ShieldCheck, Hourglass, Download as DownloadIcon
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
@@ -24,19 +24,70 @@ const SECTION_META = {
 const AssignmentDetail = () => {
   const { id } = useParams();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [assignment, setAssignment] = useState(null);
   const [loading, setLoading] = useState(true);
   const [paying, setPaying] = useState(false);
   const [activeTab, setActiveTab] = useState('outline');
+  const [aiCheckOrders, setAiCheckOrders] = useState([]);
   const pollTimerRef = useRef(null);
 
   useEffect(() => {
     fetchAssignment();
+    fetchAiCheckOrders();
     return () => {
       if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+
+  // If returning from Stripe with ai_check_session, confirm payment & refresh
+  useEffect(() => {
+    const sess = searchParams.get('ai_check_session');
+    if (!sess) return;
+    (async () => {
+      try {
+        const res = await axios.get(`${API}/ai-check/status/${sess}`);
+        if (res.data.status === 'paid') {
+          toast.success('AI check order received — we\'ll email you the report within 24 h.');
+        }
+      } catch (e) {
+        // silent
+      } finally {
+        searchParams.delete('ai_check_session');
+        setSearchParams(searchParams, { replace: true });
+        fetchAiCheckOrders();
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
+  const fetchAiCheckOrders = async () => {
+    try {
+      const res = await axios.get(`${API}/ai-check/orders/${id}`);
+      setAiCheckOrders(res.data || []);
+    } catch (e) {
+      // silent
+    }
+  };
+
+  const downloadReport = async (orderId, filename) => {
+    try {
+      const res = await axios.get(`${API}/ai-check/orders/${orderId}/report`, {
+        responseType: 'blob',
+      });
+      const url = window.URL.createObjectURL(new Blob([res.data]));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename || `ai_check_report_${orderId}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (e) {
+      toast.error('Could not download report');
+    }
+  };
 
   // Auto-poll while generation is in progress
   useEffect(() => {
@@ -304,6 +355,58 @@ const AssignmentDetail = () => {
                       );
                     })}
                   </Tabs>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* AI Check Orders */}
+            {aiCheckOrders.length > 0 && (
+              <Card className="bg-white border border-border/40 rounded-sm" data-testid="orders-card">
+                <CardHeader>
+                  <CardTitle className="text-lg flex items-center gap-2" style={{ fontFamily: 'Fraunces, serif' }}>
+                    <ShieldCheck className="w-5 h-5 text-primary" /> AI Check Orders
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="p-0">
+                  <div className="divide-y divide-border/40">
+                    {aiCheckOrders.map(o => {
+                      const tierLabel = o.tier === 'turnitin' ? 'Turnitin · $15' : 'Originality.ai · $10';
+                      const statusBadge = (() => {
+                        if (o.status === 'completed') return <Badge className="bg-green-100 text-green-800 flex items-center gap-1"><CheckCircle className="w-3 h-3" /> Report ready</Badge>;
+                        if (o.status === 'in_progress') return <Badge className="bg-purple-100 text-purple-800 flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Reviewer working</Badge>;
+                        if (o.status === 'paid') return <Badge className="bg-blue-100 text-blue-800 flex items-center gap-1"><Hourglass className="w-3 h-3" /> Queued</Badge>;
+                        return <Badge className="bg-yellow-100 text-yellow-800 flex items-center gap-1"><Clock className="w-3 h-3" /> Awaiting payment</Badge>;
+                      })();
+                      return (
+                        <div key={o.order_id || o.id} className="p-4 flex flex-col sm:flex-row sm:items-center gap-3" data-testid={`order-row-${o.id}`}>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-1 flex-wrap">
+                              {statusBadge}
+                              <span className="text-xs text-muted-foreground">{tierLabel}</span>
+                              <span className="text-xs text-muted-foreground font-mono">{String(o.id).slice(0, 8)}</span>
+                            </div>
+                            <p className="text-xs text-muted-foreground">
+                              {o.word_count} words · ordered {o.created_at?.slice(0, 10)}
+                              {o.completed_at && <> · completed {o.completed_at.slice(0, 10)}</>}
+                            </p>
+                            {o.completion_notes && (
+                              <p className="text-xs mt-1 italic text-muted-foreground">"{o.completion_notes}"</p>
+                            )}
+                          </div>
+                          {o.status === 'completed' && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => downloadReport(o.id, o.report_filename)}
+                              data-testid={`download-report-${o.id}`}
+                            >
+                              <DownloadIcon className="w-4 h-4 mr-1" /> Download report
+                            </Button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </CardContent>
               </Card>
             )}
