@@ -33,6 +33,8 @@ const AssignmentDetail = () => {
   const [activeTab, setActiveTab] = useState('outline');
   const [aiCheckOrders, setAiCheckOrders] = useState([]);
   const [regenerating, setRegenerating] = useState(false);
+  const [references, setReferences] = useState(null);
+  const [refsLoading, setRefsLoading] = useState(false);
   const pollTimerRef = useRef(null);
 
   useEffect(() => {
@@ -112,6 +114,19 @@ const AssignmentDetail = () => {
       setAiCheckOrders(res.data || []);
     } catch (e) {
       // silent
+    }
+  };
+
+  const fetchReferences = async () => {
+    setRefsLoading(true);
+    try {
+      const res = await axios.get(`${API}/assignments/${id}/suggested-references?limit=8`);
+      setReferences(res.data.references || []);
+    } catch (e) {
+      toast.error('Could not load references');
+      setReferences([]);
+    } finally {
+      setRefsLoading(false);
     }
   };
 
@@ -316,6 +331,60 @@ const AssignmentDetail = () => {
               </CardContent>
             </Card>
 
+            {/* Suggested Public References */}
+            <Card className="bg-white border border-border/40 rounded-sm" data-testid="refs-card">
+              <CardHeader className="pb-2">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <CardTitle className="text-lg flex items-center gap-2" style={{ fontFamily: 'Fraunces, serif' }}>
+                    <BookOpen className="w-5 h-5 text-primary" /> Public References
+                  </CardTitle>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={fetchReferences}
+                    disabled={refsLoading}
+                    data-testid="load-refs-btn"
+                  >
+                    {refsLoading ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-1" />}
+                    {references === null ? 'Find references' : 'Refresh'}
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent className="p-0">
+                {references === null ? (
+                  <p className="px-6 py-4 text-sm text-muted-foreground">
+                    Tap "Find references" to pull publicly accessible scholarly papers from CrossRef matching your topic.
+                  </p>
+                ) : references.length === 0 ? (
+                  <p className="px-6 py-4 text-sm text-muted-foreground">No matching references found. Try rewording your title/subject.</p>
+                ) : (
+                  <div className="divide-y divide-border/40">
+                    {references.map((r, i) => (
+                      <div key={r.doi || i} className="p-4 text-sm" data-testid={`ref-${i}`}>
+                        <a
+                          href={r.url || (r.doi ? `https://doi.org/${r.doi}` : '#')}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="font-medium text-primary hover:underline block leading-snug"
+                        >
+                          {r.title}
+                        </a>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {r.authors}{r.year ? ` · ${r.year}` : ''}{r.venue ? ` · ${r.venue}` : ''}
+                        </p>
+                        {r.abstract_excerpt && (
+                          <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{r.abstract_excerpt}…</p>
+                        )}
+                        {r.doi && (
+                          <p className="text-[11px] text-muted-foreground mt-1 font-mono">DOI: {r.doi}</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
             {/* Generating state */}
             {isGenerating && (
               <Card className="bg-white border border-border/40 rounded-sm" data-testid="generating-card">
@@ -325,7 +394,12 @@ const AssignmentDetail = () => {
                     Crafting your learning materials…
                   </h3>
                   <p className="text-sm text-muted-foreground">
-                    This usually takes 20–60 seconds. We'll refresh automatically.
+                    {assignment.word_count >= 3000
+                      ? `Long assignment (~${assignment.word_count.toLocaleString()} words) — this can take 2–4 minutes. We refresh automatically.`
+                      : 'This usually takes 20–60 seconds. We refresh automatically.'}
+                  </p>
+                  <p className="text-[11px] text-muted-foreground mt-3">
+                    Safe to leave this page — your draft will be waiting when you come back.
                   </p>
                 </CardContent>
               </Card>

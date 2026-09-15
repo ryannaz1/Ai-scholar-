@@ -35,18 +35,20 @@ const NewAssignment = () => {
     assignment_format: 'general',
     concert_structure: 'single_work',
     has_conductor: null,
+    citation_style: 'apa',
   });
 
   const calculatePrice = (words) => {
-    const pages = words / 280;
+    const w = parseInt(words) || 0;
+    const pages = w / 280;
     const basePrice = pages * 7;
-    const discount = words >= 10000 ? basePrice * 0.1 : 0;
+    const discount = w >= 10000 ? basePrice * 0.1 : 0;
     return {
       pages: pages.toFixed(1),
       basePrice: basePrice.toFixed(2),
       discount: discount.toFixed(2),
       finalPrice: (basePrice - discount).toFixed(2),
-      hasDiscount: words >= 10000
+      hasDiscount: w >= 10000
     };
   };
 
@@ -61,11 +63,16 @@ const NewAssignment = () => {
     const rawValue = e.target.value;
     // Allow empty value during typing
     if (rawValue === '') {
-      setFormData(prev => ({ ...prev, word_count: 280 }));
+      setFormData(prev => ({ ...prev, word_count: '' }));
       return;
     }
-    const value = parseInt(rawValue) || 280;
-    const clampedValue = Math.max(280, Math.min(50000, value));
+    const value = parseInt(rawValue);
+    if (isNaN(value) || value < 1) {
+      setFormData(prev => ({ ...prev, word_count: '' }));
+      return;
+    }
+    // Allow any positive number up to 50k. Pricing minimum applies separately.
+    const clampedValue = Math.min(50000, value);
     setFormData(prev => ({ ...prev, word_count: clampedValue }));
   };
 
@@ -131,6 +138,13 @@ const NewAssignment = () => {
       toast.error('Please fill in all required fields');
       return;
     }
+    const wc = parseInt(formData.word_count);
+    if (!wc || wc < 1) {
+      toast.error('Enter a valid word count (at least 1)');
+      return;
+    }
+    // Normalize before submit
+    const payload = { ...formData, word_count: wc };
 
     setLoading(true);
 
@@ -139,7 +153,7 @@ const NewAssignment = () => {
       
       // Create assignment if not already created
       if (!currentAssignmentId) {
-        const res = await axios.post(`${API}/assignments`, formData);
+        const res = await axios.post(`${API}/assignments`, payload);
         currentAssignmentId = res.data.id;
         setAssignmentId(currentAssignmentId);
       }
@@ -261,7 +275,7 @@ const NewAssignment = () => {
                         id="word_count"
                         name="word_count"
                         type="number"
-                        min="280"
+                        min="1"
                         max="50000"
                         step="1"
                         value={formData.word_count}
@@ -360,6 +374,30 @@ const NewAssignment = () => {
                       </div>
                     </div>
                   )}
+
+                  {/* Citation Style */}
+                  <div className="space-y-2">
+                    <Label htmlFor="citation_style">Citation Style</Label>
+                    <Select
+                      value={formData.citation_style}
+                      onValueChange={(value) => setFormData(prev => ({ ...prev, citation_style: value }))}
+                    >
+                      <SelectTrigger className="rounded-sm" data-testid="citation-select">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="apa">APA (7th edition)</SelectItem>
+                        <SelectItem value="mla">MLA (9th edition)</SelectItem>
+                        <SelectItem value="harvard">Harvard</SelectItem>
+                        <SelectItem value="chicago">Chicago / Turabian</SelectItem>
+                        <SelectItem value="ieee">IEEE (numeric)</SelectItem>
+                        <SelectItem value="none">No citations needed</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-[11px] text-muted-foreground">
+                      The draft will include cover page, table of contents, in-text citations in this style, references, and appendix.
+                    </p>
+                  </div>
 
                   {/* Additional Notes */}
                   <div className="space-y-2">
@@ -465,7 +503,7 @@ const NewAssignment = () => {
                   <div className="space-y-3 text-sm">
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Word count</span>
-                      <span className="font-mono">{formData.word_count.toLocaleString()}</span>
+                      <span className="font-mono">{(formData.word_count || 0).toLocaleString()}</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Pages (~280 words)</span>

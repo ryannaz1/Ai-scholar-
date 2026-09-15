@@ -13,6 +13,7 @@ import NewAssignment from "./pages/NewAssignment";
 import AssignmentDetail from "./pages/AssignmentDetail";
 import RewriteWorkspace from "./pages/RewriteWorkspace";
 import AdminDashboard from "./pages/AdminDashboard";
+import FreeAICheck from "./pages/FreeAICheck";
 import PaymentSuccess from "./pages/PaymentSuccess";
 
 // Protected Route Component
@@ -60,6 +61,7 @@ function App() {
         <Routes>
           {/* Public Routes */}
           <Route path="/" element={<LandingPage />} />
+          <Route path="/ai-checker" element={<FreeAICheck />} />
           <Route 
             path="/login" 
             element={

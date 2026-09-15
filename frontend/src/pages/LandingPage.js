@@ -62,6 +62,11 @@ const LandingPage = () => {
                   Sign In
                 </Button>
               </Link>
+              <Link to="/ai-checker">
+                <Button variant="outline" className="rounded-sm hidden sm:inline-flex border-accent/40 text-accent hover:bg-accent/5" data-testid="nav-ai-checker">
+                  <span className="text-[10px] mr-1 bg-accent/20 text-accent px-1.5 py-0.5 rounded-sm font-semibold">FREE</span> AI Detector
+                </Button>
+              </Link>
               <Link to="/register">
                 <Button className="bg-primary text-primary-foreground hover:bg-primary/90 rounded-sm px-6" data-testid="register-btn">
                   Get Started
@@ -89,9 +94,10 @@ const LandingPage = () => {
                     Start Writing <ArrowRight className="ml-2 w-5 h-5" />
                   </Button>
                 </Link>
-                <Link to="#pricing">
-                  <Button variant="outline" className="border-primary text-primary hover:bg-primary/5 rounded-sm px-8 py-6 text-base" data-testid="view-pricing-btn">
-                    View Pricing
+                <Link to="/ai-checker">
+                  <Button variant="outline" className="border-accent text-accent hover:bg-accent/5 rounded-sm px-8 py-6 text-base transition-lift" data-testid="hero-ai-checker-cta">
+                    <span className="text-[10px] mr-2 bg-accent/20 text-accent px-1.5 py-0.5 rounded-sm font-semibold">FREE</span>
+                    Try the AI Detector
                   </Button>
                 </Link>
               </div>

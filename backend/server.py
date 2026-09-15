@@ -80,9 +80,10 @@ class AssignmentCreate(BaseModel):
     word_count: int
     writing_style: Optional[str] = "academic"
     additional_notes: Optional[str] = ""
-    assignment_format: Optional[str] = "general"  # general | concert_report | lab_report | literature_review | case_study
-    concert_structure: Optional[str] = None  # single_work | multiple_pieces
+    assignment_format: Optional[str] = "general"
+    concert_structure: Optional[str] = None
     has_conductor: Optional[bool] = None
+    citation_style: Optional[str] = "apa"  # apa | mla | harvard | chicago | ieee | none
 
 class AssignmentResponse(BaseModel):
     id: str
@@ -106,6 +107,7 @@ class AssignmentResponse(BaseModel):
     assignment_format: Optional[str] = "general"
     concert_structure: Optional[str] = None
     has_conductor: Optional[bool] = None
+    citation_style: Optional[str] = "apa"
     outline_regens: Optional[int] = 0
     draft_regens: Optional[int] = 0
     writing_tips_regens: Optional[int] = 0
@@ -316,6 +318,7 @@ async def create_assignment(data: AssignmentCreate, user: dict = Depends(get_cur
         "assignment_format": data.assignment_format or "general",
         "concert_structure": data.concert_structure,
         "has_conductor": data.has_conductor,
+        "citation_style": data.citation_style or "apa",
         "outline_regens": 0,
         "draft_regens": 0,
         "writing_tips_regens": 0,
@@ -407,22 +410,22 @@ async def upload_course_material(
 
 # ==================== AI GENERATION ROUTES ====================
 
-ETHICAL_SYSTEM_MESSAGE = """You are Scholar, an ethical academic writing assistant designed to help students LEARN and IMPROVE their writing skills. You do not write final submission-ready work for students to pass off as their own. Instead, you produce educational scaffolding that teaches them how to approach their assignment.
+ETHICAL_SYSTEM_MESSAGE = """You are AIScholar, an ethical academic writing assistant designed to help students LEARN and IMPROVE their writing skills. You do not write final submission-ready work for students to pass off as their own. Instead, you produce educational scaffolding that teaches them how to approach their assignment.
 
 For every assignment, you produce THREE distinct sections:
 
 1. OUTLINE — A detailed, hierarchical outline (sections, sub-sections, key points, suggested arguments, evidence to look for). This is the structural blueprint.
 
-2. DRAFT — A reference draft written at approximately the requested word count. It demonstrates the structure, tone, evidence use, and academic register the student should aim for. It is explicitly framed as a learning template, NOT a final submission. Use clear section headings and proper academic prose.
+2. DRAFT — A reference draft written at approximately the requested word count. **The DRAFT MUST include the following standard academic components** (use markdown headings):
+   • A Cover Page block at the very top (title, student name placeholder [Your Name], course placeholder [Course Code – Course Name], instructor placeholder [Instructor Name], date placeholder [Submission Date]).
+   • A Table of Contents listing the section/heading hierarchy with page-number placeholders ([p. X]).
+   • The main body content with proper in-text citations in the requested citation_style (APA, MLA, Harvard, Chicago, or IEEE). Use placeholder author-year (or numeric) markers like (Smith, 2022) / (Smith 47) / [12] consistently.
+   • A References / Works Cited / Bibliography section at the end formatted in the requested citation_style with 5–10 realistic-sounding scholarly references the student should VERIFY before submitting.
+   • An Appendix section with at least one placeholder appendix (e.g., "Appendix A: [supplementary material — e.g., raw data table, interview schedule, code excerpts]") relevant to the subject.
 
-3. WRITING_TIPS — Concrete, actionable feedback and learning tips: how to research further, how to refine arguments, common mistakes to avoid, citation guidance, paraphrasing strategy, and specific suggestions to make the draft personal to the student's voice and original analysis.
+3. WRITING_TIPS — Concrete, actionable feedback: how to research further, how to refine arguments, common mistakes to avoid, citation-style-specific guidance, paraphrasing strategy, and suggestions to make the draft personal.
 
-ADAPT the OUTLINE and DRAFT structure to the assignment_format the user provides:
-- general → standard intro / body / conclusion academic essay
-- lab_report → Abstract / Introduction / Methods / Results / Discussion / Conclusion / References
-- literature_review → Introduction / Thematic synthesis (organized by themes, NOT one paper per paragraph) / Gaps & Future research / Conclusion
-- case_study → Background / Problem / Analysis / Recommendation / Implementation considerations
-- concert_report → see CONCERT_REPORT block in the user prompt for structure variations
+ADAPT the OUTLINE and DRAFT structure to the assignment_format the user provides (see CONCERT_REPORT / LAB_REPORT / LITERATURE_REVIEW / CASE_STUDY / MASTERS_THESIS / DISSERTATION blocks in the user prompt for structural variants).
 
 OUTPUT FORMAT (CRITICAL): Return ONLY a valid JSON object — no markdown fences, no explanations — with exactly these three string keys: "outline", "draft", "writing_tips". Each value must be plain text (markdown headings like ## allowed) using \\n for line breaks. Example:
 {"outline": "...", "draft": "...", "writing_tips": "..."}"""
@@ -633,6 +636,7 @@ async def run_generation(assignment_id: str):
 Title: {assignment['title']}
 Subject: {assignment['subject']}
 Format: {assignment.get('assignment_format', 'general')}
+Citation Style: {assignment.get('citation_style', 'apa').upper()}
 Requirements: {assignment['requirements']}
 Word Count Target: {assignment['word_count']} words (this applies to the DRAFT section only)
 Writing Style: {assignment['writing_style']}
@@ -643,7 +647,7 @@ Additional Notes: {assignment.get('additional_notes', '')}
 {materials_context if materials_context else "No supplemental materials provided."}
 
 Produce the JSON object with the three required keys (outline, draft, writing_tips).
-The DRAFT must be approximately {assignment['word_count']} words and demonstrate scholarly structure.
+The DRAFT must be approximately {assignment['word_count']} words and demonstrate scholarly structure, INCLUDING the mandatory components (Cover Page block, Table of Contents, in-text citations in {assignment.get('citation_style', 'apa').upper()} style, References section, Appendix).
 If STUDENT'S PREVIOUS WORK is provided, subtly match their tone & vocabulary in the draft (without copying phrases).
 Remember: this is a LEARNING REFERENCE, not a final submission. Encourage the student's own voice in writing_tips."""
 
@@ -1565,6 +1569,130 @@ async def admin_mark_in_progress(order_id: str, _admin: dict = Depends(require_a
 @api_router.get("/auth/me-admin")
 async def me_admin(user: dict = Depends(get_current_user)):
     return {"is_admin": is_admin(user), "email": user.get("email")}
+
+
+# ==================== SUGGESTED REFERENCES (CrossRef) + FREE AI CHECK ====================
+
+import httpx
+
+
+@api_router.get("/assignments/{assignment_id}/suggested-references")
+async def suggested_references(
+    assignment_id: str,
+    limit: int = 8,
+    user: dict = Depends(get_current_user),
+):
+    """Return publicly-accessible scholarly references from CrossRef based on the assignment subject + requirements."""
+    assignment = await db.assignments.find_one(
+        {"id": assignment_id, "user_id": user["id"]}, {"_id": 0}
+    )
+    if not assignment:
+        raise HTTPException(status_code=404, detail="Assignment not found")
+
+    # Build query: subject + key terms from title + first part of requirements
+    query_parts = [
+        assignment.get("title", ""),
+        assignment.get("subject", ""),
+        (assignment.get("requirements") or "")[:300],
+    ]
+    query = " ".join(q for q in query_parts if q).strip()
+    if not query:
+        return {"references": []}
+
+    rows = max(3, min(int(limit), 20))
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.get(
+                "https://api.crossref.org/works",
+                params={
+                    "query": query[:300],
+                    "rows": rows,
+                    "select": "DOI,title,author,issued,container-title,URL,abstract,type",
+                },
+                headers={"User-Agent": "AIScholar/1.0 (mailto:ryannazha@gmail.com)"},
+            )
+            r.raise_for_status()
+            items = r.json().get("message", {}).get("items", [])
+    except Exception as e:
+        logger.warning(f"CrossRef query failed: {e}")
+        return {"references": [], "error": "Reference service temporarily unavailable"}
+
+    refs = []
+    for it in items:
+        authors = it.get("author") or []
+        author_str = ", ".join(
+            f"{a.get('family', '')}{', ' + a.get('given', '') if a.get('given') else ''}"
+            for a in authors[:3]
+        )
+        if len(authors) > 3:
+            author_str += ", et al."
+        issued = it.get("issued", {}).get("date-parts", [[None]])[0][0]
+        title_arr = it.get("title") or []
+        title = title_arr[0] if title_arr else "(untitled)"
+        venue_arr = it.get("container-title") or []
+        venue = venue_arr[0] if venue_arr else ""
+        doi = it.get("DOI", "")
+        refs.append({
+            "title": title,
+            "authors": author_str or "Unknown",
+            "year": issued,
+            "venue": venue,
+            "doi": doi,
+            "url": it.get("URL") or (f"https://doi.org/{doi}" if doi else ""),
+            "type": it.get("type", ""),
+            "abstract_excerpt": (it.get("abstract") or "")[:300].replace("<jats:p>", "").replace("</jats:p>", ""),
+        })
+    return {"references": refs, "query": query[:200]}
+
+
+# ----- Free public AI Check (Lite) — no auth required, rate-limited via IP simple memory store -----
+
+_free_check_counter: dict = {}
+
+
+class FreeAICheckRequest(BaseModel):
+    text: str
+
+
+@api_router.post("/free-ai-check")
+async def free_ai_check(data: FreeAICheckRequest, request: Request):
+    """Public, free AI detector — runs the same Rewrite Coach heuristic + LLM analyzer (no auth)."""
+    text = (data.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Paste some text to check")
+    if len(text) > 4000:
+        raise HTTPException(status_code=400, detail="Free tier limit is 4000 characters (~700 words). Sign up for unlimited.")
+
+    # Simple per-IP rate limiting (resets daily)
+    client_ip = request.client.host if request.client else "unknown"
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    key = f"{client_ip}:{today}"
+    count = _free_check_counter.get(key, 0)
+    if count >= 5:
+        raise HTTPException(status_code=429, detail="Free tier: max 5 checks per day. Create a free account for unlimited.")
+    _free_check_counter[key] = count + 1
+
+    try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+        api_key = os.environ.get('EMERGENT_LLM_KEY')
+        chat = LlmChat(
+            api_key=api_key,
+            session_id=f"free-check-{uuid.uuid4().hex[:8]}",
+            system_message=REWRITE_COACH_SYSTEM,
+        ).with_model("openai", "gpt-5.2")
+        response = await chat.send_message(UserMessage(text=f"Analyze this text:\n\n{text}"))
+        parsed = _parse_ai_json(response) or {}
+        return {
+            "summary": parsed.get("summary", ""),
+            "ai_likelihood": parsed.get("ai_likelihood", 50),
+            "issues": (parsed.get("issues", []) or [])[:8],
+            "remaining_today": max(0, 5 - count - 1),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Free AI check failed: {e}")
+        raise HTTPException(status_code=500, detail="AI checker temporarily unavailable")
 
 
 # ==================== STATS ROUTES ====================
