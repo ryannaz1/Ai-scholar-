@@ -49,8 +49,74 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 # Upload directory
-UPLOAD_DIR = ROOT_DIR / "uploads"
-UPLOAD_DIR.mkdir(exist_ok=True)
+# Canonical file storage is Emergent Object Storage (see below).
+
+# ==================== EMERGENT OBJECT STORAGE ====================
+
+import requests as _requests
+
+STORAGE_BASE = (os.environ.get("INTEGRATION_PROXY_URL") or "").strip() or "https://integrations.emergentagent.com"
+STORAGE_URL = STORAGE_BASE.rstrip("/") + "/objstore/api/v1/storage"
+APP_STORAGE_PREFIX = "aischolar"
+_storage_key: Optional[str] = None
+
+
+def init_storage(force: bool = False) -> str:
+    global _storage_key
+    if _storage_key and not force:
+        return _storage_key
+    emergent_key = os.environ.get("EMERGENT_LLM_KEY")
+    resp = _requests.post(f"{STORAGE_URL}/init", json={"emergent_key": emergent_key}, timeout=30)
+    resp.raise_for_status()
+    _storage_key = resp.json()["storage_key"]
+    return _storage_key
+
+
+def storage_put(path: str, data: bytes, content_type: str) -> dict:
+    key = init_storage()
+    resp = _requests.put(
+        f"{STORAGE_URL}/objects/{path}",
+        headers={"X-Storage-Key": key, "Content-Type": content_type},
+        data=data,
+        timeout=120,
+    )
+    if resp.status_code == 404:
+        # Storage key may have expired — refresh once
+        key = init_storage(force=True)
+        resp = _requests.put(
+            f"{STORAGE_URL}/objects/{path}",
+            headers={"X-Storage-Key": key, "Content-Type": content_type},
+            data=data,
+            timeout=120,
+        )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def storage_get(path: str) -> tuple:
+    key = init_storage()
+    resp = _requests.get(
+        f"{STORAGE_URL}/objects/{path}",
+        headers={"X-Storage-Key": key},
+        timeout=60,
+    )
+    if resp.status_code == 404:
+        key = init_storage(force=True)
+        resp = _requests.get(
+            f"{STORAGE_URL}/objects/{path}",
+            headers={"X-Storage-Key": key},
+            timeout=60,
+        )
+    resp.raise_for_status()
+    return resp.content, resp.headers.get("Content-Type", "application/octet-stream")
+
+
+MIME_BY_EXT = {
+    ".pdf": "application/pdf",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".doc": "application/msword",
+    ".txt": "text/plain",
+}
 
 # ==================== MODELS ====================
 
@@ -365,17 +431,23 @@ async def upload_course_material(
     if file_ext not in allowed_types:
         raise HTTPException(status_code=400, detail=f"File type {file_ext} not allowed")
 
-    # Save file
+    # Save file to Emergent Object Storage
     file_id = str(uuid.uuid4())
-    file_path = UPLOAD_DIR / f"{file_id}{file_ext}"
+    storage_path = f"{APP_STORAGE_PREFIX}/uploads/{user['id']}/{file_id}{file_ext}"
 
     content = await file.read()
     # Size cap 10MB
     if len(content) > 10 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="File too large (max 10MB)")
 
-    async with aiofiles.open(file_path, 'wb') as f:
-        await f.write(content)
+    try:
+        put_result = await asyncio.to_thread(
+            storage_put, storage_path, content, MIME_BY_EXT.get(file_ext, "application/octet-stream")
+        )
+        storage_path = put_result.get("path", storage_path)
+    except Exception as e:
+        logger.exception(f"Object storage upload failed: {e}")
+        raise HTTPException(status_code=500, detail="File storage temporarily unavailable")
 
     # Extract text
     extracted_text = ""
@@ -392,7 +464,7 @@ async def upload_course_material(
         "assignment_id": assignment_id,
         "user_id": user["id"],
         "filename": file.filename,
-        "file_path": str(file_path),
+        "file_path": storage_path,
         "category": category,
         "extracted_text": extracted_text[:50000],  # Limit text
         "created_at": datetime.now(timezone.utc).isoformat()
@@ -1416,14 +1488,16 @@ async def download_ai_check_report(order_id: str, user: dict = Depends(get_curre
         raise HTTPException(status_code=404, detail="Order not found")
     if order.get("status") != "completed" or not order.get("report_path"):
         raise HTTPException(status_code=400, detail="Report not ready yet")
-    report_path = Path(order["report_path"])
-    if not report_path.exists():
+    try:
+        data, content_type = await asyncio.to_thread(storage_get, order["report_path"])
+    except Exception as e:
+        logger.exception(f"Report download failed: {e}")
         raise HTTPException(status_code=404, detail="Report file missing")
-    from fastapi.responses import FileResponse
-    return FileResponse(
-        path=str(report_path),
-        filename=order.get("report_filename", "ai_check_report.pdf"),
-        media_type="application/octet-stream"
+    from fastapi.responses import Response
+    return Response(
+        content=data,
+        media_type=content_type or "application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{order.get("report_filename", "ai_check_report.pdf")}"'},
     )
 
 
@@ -1475,15 +1549,17 @@ async def send_report_ready_email(order_id: str):
         resend.api_key = api_key
 
         tier_label = "Turnitin" if order["tier"] == "turnitin" else "Originality.ai"
-        report_path = Path(order.get("report_path", ""))
         attachments = []
-        if report_path.exists():
-            import base64
-            with open(report_path, "rb") as f:
+        if order.get("report_path"):
+            try:
+                content, _ct = await asyncio.to_thread(storage_get, order["report_path"])
+                import base64
                 attachments.append({
                     "filename": order.get("report_filename", "report.pdf"),
-                    "content": base64.b64encode(f.read()).decode("ascii"),
+                    "content": base64.b64encode(content).decode("ascii"),
                 })
+            except Exception as e:
+                logger.warning(f"Report attachment fetch failed: {e}")
 
         notes = order.get("completion_notes") or ""
         notes_html = f'<p style="background:#fafafa;padding:12px;border-left:3px solid #1a2842;">{notes}</p>' if notes else ""
@@ -1535,9 +1611,15 @@ async def admin_complete_order(
         raise HTTPException(status_code=400, detail="Report too large (max 25MB)")
 
     report_id = str(uuid.uuid4())
-    saved_path = UPLOAD_DIR / f"report_{order_id}_{report_id}{file_ext}"
-    async with aiofiles.open(saved_path, "wb") as f:
-        await f.write(content)
+    storage_path = f"{APP_STORAGE_PREFIX}/reports/{order_id}/{report_id}{file_ext}"
+    try:
+        put_result = await asyncio.to_thread(
+            storage_put, storage_path, content, MIME_BY_EXT.get(file_ext, "application/octet-stream")
+        )
+        storage_path = put_result.get("path", storage_path)
+    except Exception as e:
+        logger.exception(f"Report storage upload failed: {e}")
+        raise HTTPException(status_code=500, detail="Storage upload failed")
 
     now = datetime.now(timezone.utc).isoformat()
     await db.ai_check_orders.update_one(
@@ -1545,7 +1627,7 @@ async def admin_complete_order(
         {"$set": {
             "status": "completed",
             "report_filename": report.filename or f"report{file_ext}",
-            "report_path": str(saved_path),
+            "report_path": storage_path,
             "completion_notes": notes,
             "completed_at": now,
         }}

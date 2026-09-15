@@ -44,7 +44,14 @@ Later rebranded to **AIScholar** for SEO.
 
 ## Implementation Status
 
-### ✅ Done (latest May 2026 batch)
+### ✅ Done (Sep 2026)
+- BUG FIX — Target Word Count no longer clamped to 280; accepts any integer ≥1
+- UX — AssignmentDetail generating-card now adaptive: "Long assignment (~X words) — 2–4 minutes" for ≥3000 words, "20–60 seconds" otherwise
+- Citation Style selector on NewAssignment (APA / MLA / Harvard / Chicago / IEEE / none) — persisted, passed to LLM
+- LLM system prompt MANDATES Cover Page + Table of Contents + in-text citations in chosen style + References + Appendix on every DRAFT
+- **Suggested Public References** panel on AssignmentDetail — CrossRef API integration (free, no auth). Returns title, authors, year, DOI, URL, venue, abstract excerpt for 8 relevant papers per assignment
+- **Free public AI Detector** at `/ai-checker` — no signup, 4000 char limit, 5 checks/IP/day rate-limited. Prominent CTAs in landing nav + hero. Full SEO copy on the page.
+- Landing hero: two CTAs — Start Writing (primary) + FREE Try the AI Detector (secondary, accent color)
 - Brand pivot to **AIScholar** across all UI + SEO (title, meta description, OpenGraph, Twitter, JSON-LD WebApplication schema, robots.txt, sitemap.xml)
 - Landing-page SEO copy: hero subtitle now mentions essays / lab reports / lit reviews / case studies / Master's thesis chapters + GPT-5.2 + "built to help you learn, not cheat"
 - 8 Assignment Formats with branch-specific prompts:

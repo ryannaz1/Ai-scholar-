@@ -1,0 +1,65 @@
+{
+  "summary": "Comprehensive backend + frontend testing of AIScholar's new feature batch (word-count bug fix, long-wait UX, citation style, mandatory academic components, suggested references via CrossRef, free public AI checker, rewrite-coach 200k cap). All 9 pytest cases pass and all UI verifications pass.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/free-ai-check", "issue": "Per-IP daily rate limit uses in-memory dict; behind multiple uvicorn workers each has its own counter, so the '5 per IP per day' limit is enforced per-worker rather than globally. 429 still fires, but the effective ceiling can be up to 5 x workers. Consider moving counter to Mongo/Redis."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "NewAssignment word-count helper text", "issue": "Small helper below the Target Word Count input still says 'Minimum 280 words (1 page)' even though the input now accepts values as low as 1. Confusing copy after the bug-fix.", "selector": "helper text under input[type=number]", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "passed_tests": [
+    "BUG FIX word-count min: input has min='1', typing 100 stays as 100, blank allowed while typing (verified in UI)",
+    "Citation Style selector renders with default APA; citation-select data-testid present",
+    "POST /api/assignments citation_style='mla' persists and is returned",
+    "POST /api/assignments citation_style defaults to 'apa' when omitted",
+    "Draft generation for 300-word assignment includes Cover/Course, Table of Contents, References, Appendix",
+    "GET /api/assignments/{id}/suggested-references returns non-empty references with title/authors/year/doi/url",
+    "GET /api/assignments/{bad-id}/suggested-references returns 404",
+    "POST /api/free-ai-check (no auth) returns ai_likelihood, issues, remaining_today",
+    "POST /api/free-ai-check with >4000 chars returns 400 'Free tier limit'",
+    "POST /api/free-ai-check with empty text returns 400",
+    "POST /api/free-ai-check 6th call from same IP returns 429 within same worker",
+    "POST /api/rewrite-coach/analyze accepts 30k-char input (no 400) and returns 200",
+    "AssignmentDetail long-wait UX: 5000-word assignment shows 'Long assignment (~5,000 words) — this can take 2–4 minutes'",
+    "AssignmentDetail short-wait UX: 500-word assignment shows 'This usually takes 20–60 seconds'",
+    "generating-card data-testid renders correctly for both cases",
+    "Public References (refs-card + load-refs-btn) renders real CrossRef results (DOI/title/authors/year/venue)",
+    "/ai-checker reachable without login; check-textarea, run-check-btn, char-counter, result-card, score present",
+    "AI checker button disables when text > 4000 chars; character counter shows over-limit (e.g. '4,500 / 4,000')",
+    "Landing page nav-ai-checker and hero-ai-checker-cta both present and navigate to /ai-checker",
+    "Regression: user register + auto-login + dashboard listing works"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_new_features.py",
+    "/app/backend/tests/test_scholar_backend.py",
+    "/app/test_reports/pytest/new_features.xml"
+  ],
+  "critical_code_review_comments": [
+    "server.py file is 1744 lines — recommend splitting into routers/services (auth, assignments, payments, rewrite_coach, free_check, references).",
+    "In-memory _free_check_counter dict for rate limiting is not process-safe or restart-safe; per-worker leakage means the daily cap is not enforced strictly.",
+    "NewAssignment helper text ('Minimum 280 words (1 page)') is now inaccurate; either update copy or reintroduce a soft warning without blocking submission.",
+    "CrossRef error path returns 200 with {references: [], error: ...} — good; but consider caching common queries to reduce external latency.",
+    "suggested-references passes user's raw title+requirements into external API; consider basic sanitisation/length caps (already ~300 char cap, ok).",
+    "Free AI check endpoint returns 500 on LLM exception — acceptable but log volume could be noisy on transient LLM outages."
+  ],
+  "action_items": [
+    "(LOW) Update or remove 'Minimum 280 words (1 page)' helper copy on NewAssignment to reflect new min=1 behaviour.",
+    "(LOW) Consider persisting the free-ai-check rate limit in Mongo/Redis so the 5/day/IP cap works across uvicorn workers.",
+    "(INFO) Consider splitting server.py into smaller router modules."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_new_features.py (new)"
+  ],
+  "success_rate": {"backend": "100% (9/9 pytest)", "frontend": "100% (all UI checks pass, only 1 low-priority copy nit)"},
+  "test_credentials": "Registered dynamic student accounts (e.g. uxtest_902a8849@example.com / Test1234!). Admin ryannazha@gmail.com / Test1234! per /app/memory/test_credentials.md — not needed for this scope.",
+  "seed_data_creation": "Created several TEST_ / UX_ prefixed assignments during testing. Assignments 8ad7bb12-100c-4991-a31e-6f9997e0a566 (5000w) and 700184d7-6b4f-49f4-975e-8c61d7587e2a (500w) were set to generation_status='generating' via Mongo to exercise the AssignmentDetail generating-card copy.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "All new features (citation_style, mandatory academic components, suggested-references, free-ai-check, rewrite-coach 200k cap, long-wait UX, word-count min='1' fix) are working. Only nit is stale helper copy under Target Word Count on NewAssignment page. Backend rate limit for /api/free-ai-check is per-worker (in-memory dict) — recommend moving to shared store."
+}

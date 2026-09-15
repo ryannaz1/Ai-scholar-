@@ -289,7 +289,7 @@ const NewAssignment = () => {
                       </span>
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      Minimum 280 words (1 page). 10% discount on orders over 10,000 words.
+                      Any word count from 1 word. Pricing rounds up to 1 page ($7) minimum. 10% discount on orders over 10,000 words.
                     </p>
                   </div>
 
