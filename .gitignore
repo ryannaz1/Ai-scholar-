@@ -78,3 +78,10 @@ agenthub/agents/youtube/db
 
 # Mobile development
 android-sdk/ frontend/node_modules/.cache/default-development/0.pack
+.env
+.env.*
+*.env
+credentials.json
+*.key
+.credentials
+frontend/node_modules/.cache/default-development/0.pack
