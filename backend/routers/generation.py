@@ -202,12 +202,14 @@ The DRAFT must be approximately {assignment['word_count']} words with Cover Page
 Remember: this is a LEARNING REFERENCE. Encourage the student's own voice in writing_tips."""
 
         from emergentintegrations.llm.chat import LlmChat, UserMessage
+        from core import resolve_model
+        provider, model_name = resolve_model(assignment.get("ai_model"))
         api_key = os.environ.get("EMERGENT_LLM_KEY")
         chat = LlmChat(
             api_key=api_key,
             session_id=f"assignment-{assignment_id}",
             system_message=ETHICAL_SYSTEM_MESSAGE,
-        ).with_model("openai", "gpt-5.2")
+        ).with_model(provider, model_name)
 
         response = await chat.send_message(UserMessage(text=user_prompt))
         parsed = _parse_ai_json(response)
@@ -312,12 +314,14 @@ EXISTING SECTIONS (for consistency — do NOT regenerate these):
 Regenerate ONLY the {target_label.upper()} section with a fresh angle. Return JSON with key "{section}"."""
 
         from emergentintegrations.llm.chat import LlmChat, UserMessage
+        from core import resolve_model
+        provider, model_name = resolve_model(assignment.get("ai_model"))
         api_key = os.environ.get("EMERGENT_LLM_KEY")
         chat = LlmChat(
             api_key=api_key,
             session_id=f"regen-{assignment_id}-{section}-{uuid.uuid4().hex[:6]}",
             system_message=regen_system,
-        ).with_model("openai", "gpt-5.2")
+        ).with_model(provider, model_name)
         response = await chat.send_message(UserMessage(text=regen_user))
         parsed = _parse_ai_json(response)
         new_text = (parsed.get(section, "") or "").strip()

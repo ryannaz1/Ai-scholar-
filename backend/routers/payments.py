@@ -9,6 +9,7 @@ import resend
 from core import (
     db, logger, CheckoutRequest, CheckoutResponse,
     get_current_user, get_sender_email,
+    apply_credits_to_price, deduct_credits, maybe_pay_referral_bonus,
 )
 from routers.generation import trigger_generation_if_needed
 
@@ -91,8 +92,12 @@ async def create_checkout(data: CheckoutRequest, request: Request, user: dict = 
         success_url = f"{origin}/payment/success?session_id={{CHECKOUT_SESSION_ID}}"
         cancel_url = f"{origin}/dashboard"
 
+        # Apply user credits (min $0.50 charge)
+        base_price = float(assignment["final_price"])
+        charge_amount, credits_used = await apply_credits_to_price(user["id"], base_price)
+
         checkout_request = CheckoutSessionRequest(
-            amount=float(assignment["final_price"]),
+            amount=charge_amount,
             currency="usd",
             success_url=success_url,
             cancel_url=cancel_url,
@@ -100,6 +105,7 @@ async def create_checkout(data: CheckoutRequest, request: Request, user: dict = 
                 "assignment_id": data.assignment_id,
                 "user_id": user["id"],
                 "user_email": user["email"],
+                "credits_applied": str(credits_used),
             },
         )
         session: CheckoutSessionResponse = await stripe_checkout.create_checkout_session(checkout_request)
@@ -109,7 +115,8 @@ async def create_checkout(data: CheckoutRequest, request: Request, user: dict = 
             "session_id": session.session_id,
             "assignment_id": data.assignment_id,
             "user_id": user["id"],
-            "amount": assignment["final_price"],
+            "amount": charge_amount,
+            "credits_applied": credits_used,
             "currency": "usd",
             "status": "pending",
             "payment_status": "initiated",
@@ -155,9 +162,13 @@ async def get_payment_status(
                     {"id": transaction["assignment_id"]},
                     {"$set": {"status": "paid", "updated_at": datetime.now(timezone.utc).isoformat()}},
                 )
+                # Deduct any credits used at checkout
+                credits_used = float(transaction.get("credits_applied") or 0)
+                if credits_used > 0:
+                    await deduct_credits(transaction["user_id"], credits_used)
                 await trigger_generation_if_needed(transaction["assignment_id"], background_tasks)
-                # Fire-and-forget confirmation email
                 background_tasks.add_task(send_order_confirmation_email, transaction["assignment_id"])
+                background_tasks.add_task(maybe_pay_referral_bonus, transaction["user_id"])
 
         return {
             "status": status.status,
@@ -190,16 +201,19 @@ async def stripe_webhook(request: Request, background_tasks: BackgroundTasks):
             )
             transaction = await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
             if transaction and transaction.get("assignment_id"):
-                # Guard against duplicate confirmation emails
                 assignment = await db.assignments.find_one({"id": transaction["assignment_id"]}, {"_id": 0})
                 was_unpaid = assignment and assignment.get("status") != "paid" and assignment.get("status") != "completed"
                 await db.assignments.update_one(
                     {"id": transaction["assignment_id"]},
                     {"$set": {"status": "paid", "updated_at": datetime.now(timezone.utc).isoformat()}},
                 )
+                credits_used = float(transaction.get("credits_applied") or 0)
+                if credits_used > 0 and was_unpaid:
+                    await deduct_credits(transaction["user_id"], credits_used)
                 await trigger_generation_if_needed(transaction["assignment_id"], background_tasks)
                 if was_unpaid:
                     background_tasks.add_task(send_order_confirmation_email, transaction["assignment_id"])
+                    background_tasks.add_task(maybe_pay_referral_bonus, transaction["user_id"])
 
         return {"status": "received"}
     except Exception as e:

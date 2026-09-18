@@ -60,8 +60,10 @@ export const AuthProvider = ({ children }) => {
     return userData;
   };
 
-  const register = async (email, password, name) => {
-    const response = await axios.post(`${API}/auth/register`, { email, password, name });
+  const register = async (email, password, name, referralCode = null) => {
+    const payload = { email, password, name };
+    if (referralCode) payload.referral_code = referralCode;
+    const response = await axios.post(`${API}/auth/register`, payload);
     const { token: newToken, user: userData } = response.data;
     localStorage.setItem('token', newToken);
     axios.defaults.headers.common['Authorization'] = `Bearer ${newToken}`;

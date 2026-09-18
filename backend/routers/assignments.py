@@ -50,6 +50,7 @@ async def create_assignment(data: AssignmentCreate, user: dict = Depends(get_cur
         "concert_structure": data.concert_structure,
         "has_conductor": data.has_conductor,
         "citation_style": data.citation_style or "apa",
+        "ai_model": data.ai_model or "gpt-5.2",
         "outline_regens": 0,
         "draft_regens": 0,
         "writing_tips_regens": 0,
@@ -73,6 +74,52 @@ async def get_assignment(assignment_id: str, user: dict = Depends(get_current_us
     if not a:
         raise HTTPException(status_code=404, detail="Assignment not found")
     return AssignmentResponse(**a)
+
+
+@router.post("/assignments/{assignment_id}/duplicate", response_model=AssignmentResponse)
+async def duplicate_assignment(assignment_id: str, user: dict = Depends(get_current_user)):
+    """Create a fresh, unpaid draft copy of an existing assignment (no content, no materials)."""
+    src = await db.assignments.find_one({"id": assignment_id, "user_id": user["id"]}, {"_id": 0})
+    if not src:
+        raise HTTPException(status_code=404, detail="Assignment not found")
+
+    from core import calculate_price
+    pricing = calculate_price(src["word_count"])
+    new_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).isoformat()
+    doc = {
+        "id": new_id,
+        "user_id": user["id"],
+        "title": f"{src['title']} (copy)",
+        "subject": src["subject"],
+        "requirements": src["requirements"],
+        "word_count": src["word_count"],
+        "writing_style": src.get("writing_style", "academic"),
+        "additional_notes": src.get("additional_notes", ""),
+        "status": "draft",
+        "price": pricing.base_price,
+        "discount_applied": pricing.discount_percent > 0,
+        "final_price": pricing.final_price,
+        "generated_content": None,
+        "outline": None,
+        "draft": None,
+        "writing_tips": None,
+        "generation_status": "pending",
+        "generation_error": None,
+        "assignment_format": src.get("assignment_format", "general"),
+        "concert_structure": src.get("concert_structure"),
+        "has_conductor": src.get("has_conductor"),
+        "citation_style": src.get("citation_style", "apa"),
+        "ai_model": src.get("ai_model", "gpt-5.2"),
+        "outline_regens": 0,
+        "draft_regens": 0,
+        "writing_tips_regens": 0,
+        "course_materials": [],
+        "created_at": now,
+        "updated_at": now,
+    }
+    await db.assignments.insert_one(doc)
+    return AssignmentResponse(**{k: v for k, v in doc.items() if k != "_id"})
 
 
 @router.post("/assignments/{assignment_id}/upload")

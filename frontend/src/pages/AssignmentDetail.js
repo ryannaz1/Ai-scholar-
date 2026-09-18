@@ -3,7 +3,7 @@ import { Link, useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   BookOpen, ArrowLeft, CreditCard, Loader2,
   Download, Sparkles, CheckCircle, Clock,
-  Copy, AlertCircle, ListTree, FileText, Lightbulb, RefreshCw, Wand2, ShieldCheck, Hourglass, Download as DownloadIcon
+  Copy, AlertCircle, ListTree, FileText, Lightbulb, RefreshCw, Wand2, ShieldCheck, Hourglass, Download as DownloadIcon, Copy as DuplicateIcon
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
@@ -247,6 +247,20 @@ const AssignmentDetail = () => {
     } catch (error) {
       const message = error.response?.data?.detail || 'Generation failed to start';
       toast.error(message);
+    }
+  };
+
+  const [duplicating, setDuplicating] = useState(false);
+  const handleDuplicate = async () => {
+    setDuplicating(true);
+    try {
+      const res = await axios.post(`${API}/assignments/${id}/duplicate`);
+      toast.success('Assignment duplicated');
+      navigate(`/assignment/${res.data.id}`);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || 'Duplicate failed');
+    } finally {
+      setDuplicating(false);
     }
   };
 
@@ -774,6 +788,17 @@ const AssignmentDetail = () => {
                     <span>{assignment.course_materials?.length || 0} files</span>
                   </div>
                 </div>
+
+                <Button
+                  variant="outline"
+                  className="w-full rounded-sm mt-2"
+                  onClick={handleDuplicate}
+                  disabled={duplicating}
+                  data-testid="duplicate-assignment-btn"
+                >
+                  {duplicating ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <DuplicateIcon className="w-4 h-4 mr-2" />}
+                  Duplicate assignment
+                </Button>
               </CardContent>
             </Card>
           </div>

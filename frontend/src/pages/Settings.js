@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { BookOpen, ArrowLeft, Mail, Save, Loader2, CheckCircle2, Info } from 'lucide-react';
+import { BookOpen, ArrowLeft, Mail, Save, Loader2, CheckCircle2, Info, Send } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
@@ -20,7 +20,9 @@ const Settings = () => {
   const [senderEmail, setSenderEmail] = useState('');
   const [fallback, setFallback] = useState('');
   const [keyConfigured, setKeyConfigured] = useState(false);
-  const [isAdmin, setIsAdmin] = useState(null); // null=checking, true/false
+  const [isAdmin, setIsAdmin] = useState(null);
+  const [testTo, setTestTo] = useState('');
+  const [testing, setTesting] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -52,6 +54,20 @@ const Settings = () => {
       toast.error(e.response?.data?.detail || 'Save failed');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleTestSend = async () => {
+    const to = testTo.trim();
+    if (!to) return toast.error('Enter an email to send the test to');
+    setTesting(true);
+    try {
+      const res = await axios.post(`${API}/settings/resend/test`, { to_email: to });
+      toast.success(`Test email sent — from ${res.data.from}. Check ${to}'s inbox.`);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || 'Test send failed');
+    } finally {
+      setTesting(false);
     }
   };
 
@@ -147,6 +163,34 @@ const Settings = () => {
               {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
               Save settings
             </Button>
+
+            <div className="pt-5 border-t border-border/40 space-y-3">
+              <Label htmlFor="test-to">Send a test email</Label>
+              <div className="flex flex-col sm:flex-row gap-2">
+                <Input
+                  id="test-to"
+                  type="email"
+                  placeholder="you@yourdomain.com"
+                  value={testTo}
+                  onChange={(e) => setTestTo(e.target.value)}
+                  className="rounded-sm flex-1"
+                  data-testid="test-email-input"
+                />
+                <Button
+                  onClick={handleTestSend}
+                  disabled={testing || !keyConfigured}
+                  variant="outline"
+                  className="rounded-sm"
+                  data-testid="send-test-btn"
+                >
+                  {testing ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Send className="w-4 h-4 mr-2" />}
+                  Send test
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                In Resend test mode you can only send to <code>{fallback === 'onboarding@resend.dev' ? 'ryannazha@gmail.com' : fallback}</code>. After verifying your domain, this will work for any address.
+              </p>
+            </div>
           </CardContent>
         </Card>
       </main>

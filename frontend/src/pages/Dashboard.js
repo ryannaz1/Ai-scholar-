@@ -3,7 +3,8 @@ import { Link, useNavigate } from 'react-router-dom';
 import { 
   BookOpen, Plus, FileText, Clock, DollarSign, 
   BarChart3, LogOut, Menu, X, ChevronRight,
-  Sparkles, CheckCircle, AlertCircle, ShieldCheck, Settings as SettingsIcon
+  Sparkles, CheckCircle, AlertCircle, ShieldCheck, Settings as SettingsIcon,
+  Gift, Copy as CopyIcon, Users
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
@@ -23,11 +24,46 @@ const Dashboard = () => {
   const [assignments, setAssignments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [referral, setReferral] = useState(null);
+  const [duplicatingId, setDuplicatingId] = useState(null);
 
   useEffect(() => {
     fetchData();
     fetchAdminStatus();
+    fetchReferral();
   }, []);
+
+  const fetchReferral = async () => {
+    try {
+      const res = await axios.get(`${API}/user/referral`);
+      setReferral(res.data);
+    } catch (e) { /* silent */ }
+  };
+
+  const referralLink = referral
+    ? `${window.location.origin}/register?ref=${referral.referral_code}`
+    : '';
+
+  const copyReferralLink = () => {
+    if (!referralLink) return;
+    navigator.clipboard.writeText(referralLink);
+    toast.success('Referral link copied — share it with a friend!');
+  };
+
+  const handleDuplicate = async (e, assignmentId) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDuplicatingId(assignmentId);
+    try {
+      const res = await axios.post(`${API}/assignments/${assignmentId}/duplicate`);
+      toast.success('Assignment duplicated');
+      navigate(`/assignment/${res.data.id}`);
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Duplicate failed');
+    } finally {
+      setDuplicatingId(null);
+    }
+  };
 
   const fetchAdminStatus = async () => {
     try {
@@ -220,6 +256,50 @@ const Dashboard = () => {
           ))}
         </div>
 
+        {/* Referral card */}
+        {referral && (
+          <Card className="bg-gradient-to-br from-accent/10 to-primary/5 border border-accent/30 rounded-sm mb-6" data-testid="referral-card">
+            <CardContent className="p-5 flex flex-col md:flex-row md:items-center gap-4">
+              <div className="w-11 h-11 rounded-full bg-accent/20 flex items-center justify-center flex-shrink-0">
+                <Gift className="w-5 h-5 text-accent" strokeWidth={1.5} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="font-semibold text-foreground" style={{ fontFamily: 'Fraunces, serif' }}>
+                    Invite a friend, both get ${referral.bonus_per_referral}
+                  </h3>
+                  {referral.credits > 0 && (
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-800 font-medium" data-testid="credit-badge">
+                      ${referral.credits.toFixed(2)} credit available
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground mt-1 flex items-center gap-3 flex-wrap">
+                  <span className="inline-flex items-center gap-1"><Users className="w-3 h-3" /> {referral.referred_count} invited · {referral.paid_referrals} completed</span>
+                </p>
+                <div className="mt-3 flex items-center gap-2 max-w-xl">
+                  <input
+                    readOnly
+                    value={referralLink}
+                    onFocus={(e) => e.target.select()}
+                    className="flex-1 min-w-0 text-xs font-mono px-3 py-2 border border-border/40 rounded-sm bg-white truncate"
+                    data-testid="referral-link-input"
+                  />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={copyReferralLink}
+                    className="rounded-sm flex-shrink-0"
+                    data-testid="copy-referral-btn"
+                  >
+                    <CopyIcon className="w-4 h-4 mr-1" /> Copy
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         {/* Recent Assignments */}
         <Card className="bg-white border border-border/40 rounded-sm" data-testid="assignments-card">
           <CardHeader className="border-b border-border/40">
@@ -241,13 +321,12 @@ const Dashboard = () => {
             ) : (
               <div className="divide-y divide-border/40">
                 {assignments.slice(0, 5).map((assignment) => (
-                  <Link
+                  <div
                     key={assignment.id}
-                    to={`/assignment/${assignment.id}`}
-                    className="flex items-center justify-between p-4 hover:bg-secondary/50 transition-colors"
+                    className="flex items-center justify-between p-4 hover:bg-secondary/50 transition-colors gap-2"
                     data-testid={`assignment-${assignment.id}`}
                   >
-                    <div className="flex-1 min-w-0">
+                    <Link to={`/assignment/${assignment.id}`} className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1">
                         <h3 className="font-medium truncate">{assignment.title}</h3>
                         {getStatusBadge(assignment.status)}
@@ -255,9 +334,22 @@ const Dashboard = () => {
                       <p className="text-sm text-muted-foreground">
                         {assignment.subject} • {assignment.word_count.toLocaleString()} words • ${assignment.final_price}
                       </p>
-                    </div>
-                    <ChevronRight className="w-5 h-5 text-muted-foreground flex-shrink-0" />
-                  </Link>
+                    </Link>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={(e) => handleDuplicate(e, assignment.id)}
+                      disabled={duplicatingId === assignment.id}
+                      className="text-muted-foreground hover:text-foreground rounded-sm"
+                      data-testid={`duplicate-${assignment.id}`}
+                      title="Duplicate assignment"
+                    >
+                      {duplicatingId === assignment.id ? <BarChart3 className="w-4 h-4 animate-pulse" /> : <CopyIcon className="w-4 h-4" />}
+                    </Button>
+                    <Link to={`/assignment/${assignment.id}`}>
+                      <ChevronRight className="w-5 h-5 text-muted-foreground flex-shrink-0" />
+                    </Link>
+                  </div>
                 ))}
               </div>
             )}

@@ -36,7 +36,14 @@ const NewAssignment = () => {
     concert_structure: 'single_work',
     has_conductor: null,
     citation_style: 'apa',
+    ai_model: 'gpt-5.2',
   });
+
+  const aiModels = [
+    { value: 'gpt-5.2', label: 'Balanced (GPT-5.2)', description: 'Best quality/speed — default' },
+    { value: 'gpt-5.4-mini', label: 'Fast (GPT-5.4 Mini)', description: 'Quicker turnaround, lighter reasoning' },
+    { value: 'claude-sonnet-4.6', label: 'Premium (Claude Sonnet 4.6)', description: 'Richer prose, stronger synthesis' },
+  ];
 
   const calculatePrice = (words) => {
     const w = parseInt(words) || 0;
@@ -306,6 +313,29 @@ const NewAssignment = () => {
                       <SelectContent>
                         {writingStyles.map(style => (
                           <SelectItem key={style.value} value={style.value}>{style.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {/* AI Model Picker */}
+                  <div className="space-y-2">
+                    <Label htmlFor="ai_model">AI Model</Label>
+                    <Select
+                      value={formData.ai_model}
+                      onValueChange={(value) => setFormData(prev => ({ ...prev, ai_model: value }))}
+                    >
+                      <SelectTrigger className="rounded-sm" data-testid="ai-model-select">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {aiModels.map(m => (
+                          <SelectItem key={m.value} value={m.value}>
+                            <div className="flex flex-col">
+                              <span>{m.label}</span>
+                              <span className="text-[11px] text-muted-foreground">{m.description}</span>
+                            </div>
+                          </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>

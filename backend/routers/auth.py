@@ -1,4 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends
+from pydantic import BaseModel
+from typing import Optional
 from datetime import datetime, timezone
 import uuid
 
@@ -10,14 +12,24 @@ from core import (
 router = APIRouter(prefix="/api")
 
 
+class UserCreateWithRef(UserCreate):
+    referral_code: Optional[str] = None
+
+
 @router.post("/auth/register", response_model=TokenResponse)
-async def register(data: UserCreate):
+async def register(data: UserCreateWithRef):
     existing = await db.users.find_one({"email": data.email})
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
 
     user_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
+
+    referred_by = None
+    if data.referral_code:
+        ref = await db.users.find_one({"id": data.referral_code}, {"_id": 0, "id": 1})
+        if ref and ref["id"] != user_id:
+            referred_by = ref["id"]
 
     await db.users.insert_one({
         "id": user_id,
@@ -26,6 +38,8 @@ async def register(data: UserCreate):
         "name": data.name,
         "created_at": now,
         "credits": 0.0,
+        "referred_by": referred_by,
+        "referral_bonus_paid": False,
     })
     return TokenResponse(
         token=create_token(user_id),

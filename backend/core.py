@@ -129,6 +129,7 @@ class AssignmentCreate(BaseModel):
     concert_structure: Optional[str] = None
     has_conductor: Optional[bool] = None
     citation_style: Optional[str] = "apa"
+    ai_model: Optional[str] = "gpt-5.2"
 
 
 class AssignmentResponse(BaseModel):
@@ -154,6 +155,7 @@ class AssignmentResponse(BaseModel):
     concert_structure: Optional[str] = None
     has_conductor: Optional[bool] = None
     citation_style: Optional[str] = "apa"
+    ai_model: Optional[str] = "gpt-5.2"
     outline_regens: Optional[int] = 0
     draft_regens: Optional[int] = 0
     writing_tips_regens: Optional[int] = 0
@@ -289,3 +291,88 @@ async def get_sender_email() -> str:
     if domain:
         return domain
     return os.environ.get("SENDER_EMAIL", "onboarding@resend.dev")
+
+
+# ---------- AI models ----------
+# Maps public model IDs to emergentintegrations (provider, model_name) tuples
+AI_MODELS = {
+    "gpt-5.2": {
+        "label": "Balanced (GPT-5.2)",
+        "description": "Default — best quality/speed trade-off",
+        "provider": "openai",
+        "model": "gpt-5.2",
+    },
+    "gpt-5.4-mini": {
+        "label": "Fast (GPT-5.4 Mini)",
+        "description": "Quicker turnaround, lighter reasoning",
+        "provider": "openai",
+        "model": "gpt-5.4-mini",
+    },
+    "claude-sonnet-4.6": {
+        "label": "Premium (Claude Sonnet 4.6)",
+        "description": "Higher-quality prose, richer synthesis",
+        "provider": "anthropic",
+        "model": "claude-sonnet-4-6",
+    },
+}
+
+
+def resolve_model(ai_model: Optional[str]) -> tuple:
+    cfg = AI_MODELS.get(ai_model or "gpt-5.2") or AI_MODELS["gpt-5.2"]
+    return cfg["provider"], cfg["model"]
+
+
+# ---------- Referral / credit helpers ----------
+REFERRAL_BONUS = 5.0  # $5 for both parties when referred user makes first paid order
+
+
+async def apply_credits_to_price(user_id: str, price: float) -> tuple:
+    """Return (final_charge, credits_used). Leaves a $0.50 minimum charge."""
+    user = await db.users.find_one({"id": user_id}, {"_id": 0, "credits": 1})
+    credits = float((user or {}).get("credits") or 0)
+    if credits <= 0 or price <= 0.50:
+        return price, 0.0
+    max_usable = max(0.0, price - 0.50)
+    used = min(credits, max_usable)
+    return round(price - used, 2), round(used, 2)
+
+
+async def deduct_credits(user_id: str, amount: float):
+    if amount <= 0:
+        return
+    await db.users.update_one({"id": user_id}, {"$inc": {"credits": -amount}})
+    await db.credit_ledger.insert_one({
+        "user_id": user_id,
+        "delta": -amount,
+        "reason": "checkout_apply",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+
+
+async def award_credit(user_id: str, amount: float, reason: str):
+    await db.users.update_one({"id": user_id}, {"$inc": {"credits": amount}})
+    await db.credit_ledger.insert_one({
+        "user_id": user_id,
+        "delta": amount,
+        "reason": reason,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+
+
+async def maybe_pay_referral_bonus(user_id: str):
+    """When a user completes their FIRST paid assignment, credit both them and their referrer."""
+    user = await db.users.find_one({"id": user_id}, {"_id": 0})
+    if not user or user.get("referral_bonus_paid"):
+        return
+    # Count paid assignments
+    paid_count = await db.assignments.count_documents(
+        {"user_id": user_id, "status": {"$in": ["paid", "completed"]}}
+    )
+    if paid_count < 1:
+        return
+    referrer_id = user.get("referred_by")
+    await db.users.update_one({"id": user_id}, {"$set": {"referral_bonus_paid": True}})
+    if referrer_id:
+        await award_credit(referrer_id, REFERRAL_BONUS, f"referral_reward_from_{user_id}")
+        await award_credit(user_id, REFERRAL_BONUS, "referral_signup_bonus")
+        logger.info(f"Referral bonus paid: {referrer_id} <- {user_id}")

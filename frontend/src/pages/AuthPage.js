@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
-import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { BookOpen, Mail, Lock, User, ArrowRight, Loader2 } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Link, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
+import { BookOpen, Mail, Lock, User, ArrowRight, Loader2, Gift } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
@@ -11,6 +11,7 @@ import { toast } from 'sonner';
 const AuthPage = ({ mode = 'login' }) => {
   const navigate = useNavigate();
   const location = useLocation();
+  const [searchParams] = useSearchParams();
   const { login, register } = useAuth();
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
@@ -18,9 +19,24 @@ const AuthPage = ({ mode = 'login' }) => {
     email: '',
     password: ''
   });
+  const [referralCode, setReferralCode] = useState('');
 
   const isLogin = mode === 'login';
   const from = location.state?.from?.pathname || '/dashboard';
+
+  useEffect(() => {
+    const ref = searchParams.get('ref');
+    if (ref) {
+      setReferralCode(ref);
+      // Persist so it survives login→register toggle
+      try { sessionStorage.setItem('pending_ref', ref); } catch (e) {}
+    } else {
+      try {
+        const stored = sessionStorage.getItem('pending_ref');
+        if (stored) setReferralCode(stored);
+      } catch (e) {}
+    }
+  }, [searchParams]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -36,8 +52,9 @@ const AuthPage = ({ mode = 'login' }) => {
           setLoading(false);
           return;
         }
-        await register(formData.email, formData.password, formData.name);
-        toast.success('Account created successfully!');
+        await register(formData.email, formData.password, formData.name, referralCode || null);
+        toast.success(referralCode ? 'Account created — $5 credit will be added on your first paid order!' : 'Account created successfully!');
+        try { sessionStorage.removeItem('pending_ref'); } catch (e) {}
       }
       navigate(from, { replace: true });
     } catch (error) {
@@ -131,6 +148,15 @@ const AuthPage = ({ mode = 'login' }) => {
                   />
                 </div>
               </div>
+
+              {!isLogin && referralCode && (
+                <div className="flex items-center gap-2 p-3 rounded-sm bg-accent/10 border border-accent/30" data-testid="referral-banner">
+                  <Gift className="w-4 h-4 text-accent flex-shrink-0" />
+                  <p className="text-xs text-foreground">
+                    You were invited by a friend — <b>$5 credit</b> will be added when you complete your first paid order.
+                  </p>
+                </div>
+              )}
 
               <Button
                 type="submit"
