@@ -5,19 +5,21 @@ Build an app that does assignments for students. $7/280 words, 10% off ≥10k wo
 
 ## What's implemented (Feb 2026)
 
-### Chained AI Generation (NEW — replaces single-shot)
-Multi-step pipeline scales to 10,000+ words by decomposing the LLM work:
-1. **Plan** — 1 API call → returns chapter list `[{id, title, target_words, key_points}]` + outline markdown + writing-tips seed
-2. **Write chapters** — 1 API call per chapter, injecting previous chapter summaries for narrative cohesion
-3. **Compile references** — 1 API call over the full compiled body, styled per the assignment's citation style
-4. **Finalize tips** — 1 API call synthesising the outline + chapter recaps
-5. **Assemble** — deterministic markdown: Cover page + TOC + Chapters + References + Appendix
-6. **Notify** — Resend "your assignment is ready" email (idempotent via `ready_email_sent`)
+### Chained AI Generation with Editor-based citation compilation
+Multi-step pipeline scales to 10,000+ words:
+1. **Plan** — 1 API call → chapter list + outline + tips seed
+2. **Write chapters** — 1 API call per chapter, injecting previous chapter summaries. Each chapter returns `{body, summary, references[]}`. Body ends with `### References Cited in This Chapter` mini-list (APA 7). References array is a JSON-typed list for clean pass-through.
+3. **Editor merge** — 1 API call receives ONLY the collected mini-lists (not chapter bodies), deterministically de-duped before the call, then merges/dedupes/alphabetizes into one master References section in the target citation style
+4. **Writing tips** — 1 API call
+5. **Assemble** — mini-ref sections stripped from each chapter body (`_strip_mini_references`) before final concat; master References appears only at the end, before Appendix
+6. **Notify** — Resend "assignment ready" email (idempotent)
 
-Progress fields (`generation_progress` 0-100, `generation_step`, `total_chapters`, `chapters_completed`) power a live progress bar on the assignment page (polling every 4s).
+Progress fields (`generation_progress` 0-100, `generation_step`, `total_chapters`, `chapters_completed`) power a live progress bar.
 
-### Everything else already shipped
-- Auth (JWT + referral_code), 8 assignment formats, categorized uploads, dynamic Stripe pricing with 10% bulk discount, retry-payment UI, credits application, **duplicate assignment**, **referral bonuses** ($5 both sides), AI model picker (GPT-5.2 / GPT-5.4 Mini / Claude Sonnet 4.6), per-section regenerate (2 free + $5), Rewrite Workspace, manual AI checks (Originality $10 / Turnitin $15), admin reviewer inbox, order-confirmation + report-ready + assignment-ready emails, Settings page with **test-send** button, free public AI check.
+**Verified end-to-end (Feb 2026 test)**: 1500-word CRISPR assignment → 4 chapters, 2,451 words, 0 mini-ref headings leaked into final draft, master References at position 13688 (before Appendix at 18175), 18 alphabetized entries.
+
+### Everything already shipped
+- Auth (JWT + referral_code), 8 assignment formats, categorized uploads, dynamic Stripe pricing + 10% bulk discount, retry-payment UI, credits application, duplicate assignment, referral bonuses ($5 both sides), AI model picker (GPT-5.2 / GPT-5.4 Mini / Claude Sonnet 4.6), per-section regenerate (2 free + $5), Rewrite Workspace, manual AI checks ($10 / $15), admin reviewer inbox, order-confirmation + report-ready + assignment-ready emails, Settings page with test-send, free public AI check.
 
 ## Architecture
 ```
@@ -28,7 +30,7 @@ Progress fields (`generation_progress` 0-100, `generation_step`, `total_chapters
     ├── auth.py             # /api/auth/* (referral_code aware)
     ├── pricing.py
     ├── assignments.py      # CRUD, upload, regenerate, duplicate
-    ├── generation.py       # CHAINED PIPELINE: plan → chapters → refs → tips → assemble → email
+    ├── generation.py       # CHAINED PIPELINE + editor-style ref merger + strip_mini_references
     ├── payments.py         # checkout, webhook, confirmation + ready emails
     ├── ai_check.py
     ├── references.py
@@ -39,13 +41,13 @@ Progress fields (`generation_progress` 0-100, `generation_step`, `total_chapters
 
 ## Backlog / Roadmap
 ### P1
-- Resend domain verification (manual step in resend.com; test-send button lets user validate DNS in 1s)
-- Frontend: show AI model badge on assignment detail
-- Frontend: show completed chapters as expanded accordion during generation (currently only progress bar)
+- Resend domain verification (manual DNS step; test-send button validates in 1s)
+- Frontend: AI model badge on assignment detail
+- Frontend: stream completed chapters as expandable cards during generation
 
 ### P2
-- Regression tests under `/app/backend/tests/`
-- Celery/Redis worker if we ever need to survive backend restarts mid-generation (current: FastAPI BackgroundTasks — task dies if pod restarts)
+- Regression tests under `/app/backend/tests/` (esp. `_strip_mini_references`, `_extract_mini_refs_from_body`)
+- Celery/Redis worker for pod-restart resilience
 
 ## Third-party integrations
 - **OpenAI GPT-5.2, GPT-5.4 Mini** + **Claude Sonnet 4.6** via Emergent LLM Key
@@ -54,17 +56,9 @@ Progress fields (`generation_progress` 0-100, `generation_step`, `total_chapters
 - **Emergent Object Storage**
 - **CrossRef**
 
-## Key endpoints
-- `POST /api/auth/register` (accepts `referral_code`)
-- `POST /api/assignments/{id}/duplicate`
-- `GET  /api/user/referral`
-- `GET|PUT /api/settings/resend` + `POST /api/settings/resend/test`
-- `GET  /api/payments/attempts/{id}`
-- `POST /api/assignments/{id}/generate` triggers chained pipeline
-
 ## Notes for future agents
-- Chained pipeline lives entirely in `routers/generation.py` — helpers prefixed `_` (`_plan_document`, `_write_chapter`, `_compile_references`, `_write_tips`, `_llm_call`, `_set_progress`, `_make_cover_page`, `_make_toc`, `_make_appendix`)
-- To change how the doc is chunked, edit `PLANNER_SYSTEM` in `generation.py`
-- Chapter context injection uses `chapter_summaries[-8:]` — expand if you need longer memory
-- Ready email requires `APP_PUBLIC_URL` env var for the deep link; falls back to Order ID text otherwise
+- Chapter writer prompt (`CHAPTER_WRITER_SYSTEM`) REQUIRES the `references` JSON array. The `_extract_mini_refs_from_body` fallback salvages from body text if the model omits it.
+- Editor prompt (`REFERENCES_SYSTEM`) receives ONLY mini-lists, never chapter bodies — this fixes the "editor loses context" bug.
+- `MINI_REF_HEADING_RE` matches `## / ### / #### References Cited in This Chapter` / `Chapter References` / `References` (case-insensitive) — extend if you change the heading marker.
+- Deterministic dedup happens before the LLM call in `_compile_references` (identical strings, normalized whitespace).
 - `test_credentials.md` has admin creds

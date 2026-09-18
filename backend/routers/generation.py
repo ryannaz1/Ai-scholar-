@@ -195,6 +195,7 @@ async def run_generation(assignment_id: str):
         # STEP 2: Chapter-by-chapter writing with context injection
         chapter_bodies = []
         chapter_summaries = []
+        chapter_refs_lists = []  # list[list[str]] — per-chapter mini reference lists
         for i, chap in enumerate(chapters):
             start_pct = 10 + int(70 * (i / max(total, 1)))
             await _set_progress(
@@ -203,28 +204,30 @@ async def run_generation(assignment_id: str):
                 pct=start_pct,
                 chapters_completed=i,
             )
-            body, summary = await _write_chapter(assignment, chap, chapter_summaries, materials_context)
+            body, summary, refs_list = await _write_chapter(assignment, chap, chapter_summaries, materials_context)
             chapter_bodies.append(body)
             chapter_summaries.append(summary or f"Chapter {i+1}: {chap.get('title','')}")
+            chapter_refs_lists.append(refs_list)
             await _set_progress(
                 assignment_id,
                 pct=10 + int(70 * ((i + 1) / max(total, 1))),
                 chapters_completed=i + 1,
             )
 
-        # STEP 3: Compile references
-        await _set_progress(assignment_id, step="Compiling references…", pct=85)
-        references_md = await _compile_references(assignment, chapter_bodies)
+        # STEP 3: Editor — merge/dedupe/alphabetize mini-lists into master References
+        await _set_progress(assignment_id, step="Merging references (editor)…", pct=85)
+        references_md = await _compile_references(assignment, chapter_refs_lists)
 
         # STEP 4: Writing tips
         await _set_progress(assignment_id, step="Finalizing writing tips…", pct=92)
         writing_tips = await _write_tips(assignment, outline_md, writing_tips_seed, chapter_summaries)
 
-        # STEP 5: Assemble
+        # STEP 5: Assemble — strip mini-refs from each chapter body so refs only appear at the end
+        cleaned_chapter_bodies = [_strip_mini_references(b) for b in chapter_bodies]
         cover = _make_cover_page(assignment, plan.get("title") or assignment["title"])
         toc = _make_toc(chapters)
         appendix = _make_appendix(assignment)
-        full_draft = "\n\n".join([cover, toc, *chapter_bodies, references_md, appendix])
+        full_draft = "\n\n".join([cover, toc, *cleaned_chapter_bodies, references_md, appendix])
         combined = f"# Outline\n\n{outline_md}\n\n# Draft\n\n{full_draft}\n\n# Writing Tips\n\n{writing_tips}"
 
         await db.assignments.update_one(
@@ -292,26 +295,35 @@ CHAPTER_WRITER_SYSTEM = """You are AIScholar's chapter writer. You are writing O
 
 Return ONLY a JSON object (no markdown fences):
 {
-  "body": "<chapter markdown, starting with `## <chapter title>` heading, ~target_words long, in the requested citation style with placeholder in-text citations>",
-  "summary": "<2-3 sentence recap of what this chapter argued/covered, for the next chapter's context>"
+  "body": "<chapter markdown, starting with `## <chapter title>` heading, ~target_words long, with in-text APA 7 citations in the requested citation style (default APA 7 unless another style is explicitly requested). END the chapter body with a heading `### References Cited in This Chapter` followed by a fully-formatted APA 7 reference list of ONLY the sources you cited in this chapter>",
+  "summary": "<2-3 sentence recap of what this chapter argued/covered, for the next chapter's context>",
+  "references": ["<full APA 7 entry #1>", "<full APA 7 entry #2>", "..."]
 }
 
+MANDATORY RULES (do NOT skip):
+1. Every in-text citation MUST have a matching full-form entry in BOTH the chapter's `### References Cited in This Chapter` section AND the top-level `references` JSON array.
+2. Reference entries must be complete APA 7 format:
+   `Author, A. A., & Author, B. B. (Year). Title of work. Journal Title, Volume(Issue), pp-pp. https://doi.org/xx.xxxx/xxxxxx`
+   For books: `Author, A. A. (Year). Title of book (Xth ed.). Publisher.`
+3. If you invent a source, keep it internally consistent (same author, year, journal on every mention).
+4. The target word count applies to the narrative content — the mini-reference list is extra and not counted toward it.
+5. Do NOT include a cover page, table of contents, references section for the whole document, or appendix — those are compiled separately.
+6. Do NOT start with "In this chapter, we will..." — write substantively from sentence one.
+7. Maintain narrative cohesion with the previous chapter summaries provided."""
+
+
+REFERENCES_SYSTEM = """You are AIScholar's citation editor. You will receive the mini-reference lists that each chapter writer produced. Your ONLY job is to merge, deduplicate, and alphabetize them into one final master References section.
+
+You will NOT receive the chapter body text — only the reference lists. Do NOT invent new sources. Do NOT hunt for missing citations. Work exclusively with what you're given.
+
+Return ONLY the markdown for the master References section — start with the appropriate heading (`## References` for APA 7 / Harvard / IEEE, `## Works Cited` for MLA, `## Bibliography` for Chicago).
+
 RULES:
-- Hit the target word count within ±15%
-- Include realistic in-text citations in the requested style (APA/MLA/Harvard/Chicago/IEEE) — placeholder authors OK
-- Do NOT re-do the cover page, TOC, references or appendix — those are compiled separately
-- Do NOT start with "In this chapter, we will..." — write substantively from sentence one
-- Maintain narrative cohesion with the previous chapter summaries provided"""
-
-
-REFERENCES_SYSTEM = """You are AIScholar's citation compiler. Given the full chapter bodies of a reference draft, produce a complete References section in the requested citation style.
-
-Return ONLY the markdown for the References section — start with the appropriate heading (`## References` for APA/Harvard, `## Works Cited` for MLA, `## Bibliography` for Chicago, `## References` for IEEE).
-
-- 8-15 realistic scholarly entries (peer-reviewed articles, books, conference papers)
-- Consistent formatting per the requested style
-- Cover the topics discussed in the chapters
-- No commentary before or after the list"""
+1. Deduplicate: entries that describe the same source (same author + year + title) collapse to one canonical entry — prefer the most complete formatting.
+2. Alphabetize by first author's surname (APA/Harvard/Chicago/MLA) or by citation number order (IEEE — number them [1], [2], …).
+3. Fix obvious inconsistencies (e.g., missing italics markers, inconsistent DOI URLs — normalize to https://doi.org/… form).
+4. Preserve every distinct source — do not delete anything just because it looks redundant with something else in a different way.
+5. No commentary before or after the list."""
 
 
 TIPS_SYSTEM = """You are AIScholar's writing coach. Given an outline, brief tips seed, and chapter recaps, produce final actionable "Writing Tips" for the student to make this their own.
@@ -365,12 +377,12 @@ async def _write_chapter(assignment: dict, chapter_spec: dict, prev_summaries: l
     user_prompt = f"""Assignment: {assignment['title']}
 Subject: {assignment['subject']}
 Format: {assignment.get('assignment_format', 'general')}
-Citation Style: {assignment.get('citation_style', 'apa').upper()}
+Citation Style: {assignment.get('citation_style', 'apa').upper()} (use APA 7 formatting for the mini reference list at the bottom of this chapter regardless of citation_style — the Editor step will convert if needed)
 Writing Style: {assignment['writing_style']}
 
 CHAPTER TO WRITE:
 Chapter {chapter_spec.get('id')}: {chapter_spec.get('title')}
-Target words: {chapter_spec.get('target_words', 500)}
+Target words: {chapter_spec.get('target_words', 500)} (narrative only — the mini reference list is EXTRA)
 Key points to cover:
 {key_points or '  (open — use your judgment based on chapter title)'}
 Structural notes: {chapter_spec.get('notes', '')}
@@ -381,35 +393,110 @@ PREVIOUS CHAPTER RECAPS (for continuity):
 RELEVANT SOURCE MATERIAL (excerpts):
 {materials_context[:8000] if materials_context else '(none provided)'}
 
-Write this chapter now. Return the JSON with `body` and `summary` keys."""
+Write this chapter now. Return the JSON with `body`, `summary`, and `references` keys.
+- End `body` with a `### References Cited in This Chapter` heading followed by the APA 7 formatted list of ONLY sources you cited in this chapter.
+- Duplicate that same list into the `references` JSON array (each entry a full APA 7 string)."""
     raw = await _llm_call(assignment, CHAPTER_WRITER_SYSTEM, user_prompt, f"ch{chapter_spec.get('id', 'x')}")
     parsed = _parse_ai_json(raw) or {}
     body = (parsed.get("body") or "").strip()
     summary = (parsed.get("summary") or "").strip()
+    refs_list = parsed.get("references") or []
+    # Normalize refs to list[str]
+    if isinstance(refs_list, str):
+        refs_list = [line.strip() for line in refs_list.split("\n") if line.strip()]
+    refs_list = [str(r).strip() for r in refs_list if str(r).strip()]
+
     if not body:
-        # fallback: use raw response as body
         body = raw.strip() if isinstance(raw, str) else ""
     if not body.startswith("#"):
         body = f"## {chapter_spec.get('title', 'Chapter')}\n\n{body}"
-    return body, summary
+
+    # If the JSON `references` array is empty, try to salvage from the body's mini-list
+    if not refs_list:
+        refs_list = _extract_mini_refs_from_body(body)
+
+    return body, summary, refs_list
 
 
-async def _compile_references(assignment: dict, chapter_bodies: list) -> str:
-    joined = "\n\n".join(chapter_bodies)[:30000]
-    user_prompt = f"""Citation Style: {assignment.get('citation_style', 'apa').upper()}
+MINI_REF_HEADING_RE = re.compile(
+    r"\n#{2,4}\s*(references cited in this chapter|chapter references|references)\s*\n",
+    re.IGNORECASE,
+)
+
+
+def _strip_mini_references(body: str) -> str:
+    """Remove the `### References Cited in This Chapter` section (and everything after it) from a chapter body."""
+    if not body:
+        return body
+    m = MINI_REF_HEADING_RE.search(body)
+    if m:
+        return body[: m.start()].rstrip() + "\n"
+    return body
+
+
+def _extract_mini_refs_from_body(body: str) -> list:
+    """Fallback extractor when the LLM omits the `references` JSON key but includes the mini-list in the body."""
+    if not body:
+        return []
+    m = MINI_REF_HEADING_RE.search(body)
+    if not m:
+        return []
+    tail = body[m.end():].strip()
+    # Split entries on blank lines, bullets, or numbered markers
+    entries = []
+    for chunk in re.split(r"\n\s*\n", tail):
+        line = re.sub(r"^\s*(?:[-*+]|\d+\.)\s*", "", chunk.strip())
+        if line and len(line) > 15:
+            entries.append(line)
+    return entries
+
+
+async def _compile_references(assignment: dict, chapter_refs_lists: list) -> str:
+    """chapter_refs_lists: list[list[str]] — one mini-list per chapter."""
+    # Deterministic dedup before calling LLM: identical strings collapse
+    seen = set()
+    flat_entries = []
+    for i, chapter_refs in enumerate(chapter_refs_lists, start=1):
+        for entry in chapter_refs:
+            key = re.sub(r"\s+", " ", entry.lower()).strip()
+            if key not in seen:
+                seen.add(key)
+                flat_entries.append((i, entry))
+
+    if not flat_entries:
+        return f"## References\n\n_[No sources were cited in this document.]_\n"
+
+    grouped_by_chapter = {}
+    for ch_idx, entry in flat_entries:
+        grouped_by_chapter.setdefault(ch_idx, []).append(entry)
+
+    mini_lists_text = "\n\n".join(
+        f"CHAPTER {ch}:\n" + "\n".join(f"- {e}" for e in entries)
+        for ch, entries in sorted(grouped_by_chapter.items())
+    )
+
+    user_prompt = f"""Target Citation Style: {assignment.get('citation_style', 'apa').upper()} (default: APA 7)
 Subject: {assignment['subject']}
 Title: {assignment['title']}
 
-Chapter contents (for topic reference):
-{joined}
+Merge these per-chapter mini-reference lists into ONE master References section.
+- Deduplicate entries that describe the same source
+- Alphabetize by first author's surname (or number in citation order for IEEE)
+- Convert entries to the target citation style if it differs from APA 7
+- Return ONLY the final markdown References section
 
-Produce the References section in the {assignment.get('citation_style', 'apa').upper()} style."""
+MINI-LISTS COLLECTED FROM EACH CHAPTER:
+{mini_lists_text[:20000]}"""
+
     raw = await _llm_call(assignment, REFERENCES_SYSTEM, user_prompt, "refs")
     text = (raw or "").strip()
-    # Strip accidental fences
     text = re.sub(r"^```(?:markdown|md)?\s*|\s*```$", "", text, flags=re.MULTILINE)
     if not text.lstrip().startswith("#"):
-        text = f"## References\n\n{text}"
+        heading = {
+            "mla": "## Works Cited",
+            "chicago": "## Bibliography",
+        }.get((assignment.get("citation_style") or "apa").lower(), "## References")
+        text = f"{heading}\n\n{text}"
     return text
 
 
