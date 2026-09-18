@@ -11,6 +11,7 @@ import { Badge } from '../components/ui/badge';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import confetti from 'canvas-confetti';
 import axios from 'axios';
 import { toast } from 'sonner';
 
@@ -35,16 +36,53 @@ const AssignmentDetail = () => {
   const [regenerating, setRegenerating] = useState(false);
   const [references, setReferences] = useState(null);
   const [refsLoading, setRefsLoading] = useState(false);
+  const [paymentAttempts, setPaymentAttempts] = useState(0);
+  const [justPaid, setJustPaid] = useState(false);
   const pollTimerRef = useRef(null);
+  const confettiFiredRef = useRef(false);
+
+  const fireConfetti = () => {
+    if (confettiFiredRef.current) return;
+    confettiFiredRef.current = true;
+    const duration = 2500;
+    const end = Date.now() + duration;
+    const colors = ['#1a2842', '#c9a961', '#f5f1e8', '#22c55e'];
+    (function frame() {
+      confetti({ particleCount: 4, angle: 60, spread: 55, origin: { x: 0 }, colors });
+      confetti({ particleCount: 4, angle: 120, spread: 55, origin: { x: 1 }, colors });
+      if (Date.now() < end) requestAnimationFrame(frame);
+    })();
+    confetti({ particleCount: 120, spread: 90, origin: { y: 0.6 }, colors, scalar: 1.1 });
+  };
 
   useEffect(() => {
     fetchAssignment();
     fetchAiCheckOrders();
+    fetchPaymentAttempts();
     return () => {
       if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+
+  // Detect landing here fresh from Stripe checkout success
+  useEffect(() => {
+    if (searchParams.get('paid') === '1') {
+      setJustPaid(true);
+      fireConfetti();
+      toast.success('Payment received — AI is drafting now.');
+      searchParams.delete('paid');
+      setSearchParams(searchParams, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const fetchPaymentAttempts = async () => {
+    try {
+      const res = await axios.get(`${API}/payments/attempts/${id}`);
+      setPaymentAttempts(res.data.attempts || 0);
+    } catch (e) {/* silent */}
+  };
 
   // If returning from Stripe with ai_check_session, confirm payment & refresh
   useEffect(() => {
@@ -385,18 +423,39 @@ const AssignmentDetail = () => {
               </CardContent>
             </Card>
 
+            {/* Just-paid confirmation banner */}
+            {justPaid && (
+              <Card className="bg-white border-2 border-green-300 rounded-sm shadow-sm" data-testid="just-paid-card">
+                <CardContent className="p-6 text-center">
+                  <div className="w-14 h-14 rounded-full bg-green-100 flex items-center justify-center mx-auto mb-3">
+                    <CheckCircle className="w-8 h-8 text-green-600" />
+                  </div>
+                  <h3 className="text-xl font-semibold mb-2" style={{ fontFamily: 'Fraunces, serif' }}>
+                    Payment received — thank you!
+                  </h3>
+                  <p className="text-sm text-muted-foreground max-w-md mx-auto">
+                    Your assignment is now being crafted by our AI writing assistant.
+                    It'll be ready in a bit — please be patient, quality writing takes a moment.
+                  </p>
+                  <p className="text-[11px] text-muted-foreground mt-3">
+                    A confirmation email is on its way. You can safely close this page and come back later.
+                  </p>
+                </CardContent>
+              </Card>
+            )}
+
             {/* Generating state */}
             {isGenerating && (
               <Card className="bg-white border border-border/40 rounded-sm" data-testid="generating-card">
                 <CardContent className="p-8 text-center">
                   <Loader2 className="w-10 h-10 text-primary mx-auto mb-4 animate-spin" />
                   <h3 className="text-lg font-semibold mb-1" style={{ fontFamily: 'Fraunces, serif' }}>
-                    Crafting your learning materials…
+                    Your assignment is being made by AI…
                   </h3>
                   <p className="text-sm text-muted-foreground">
                     {assignment.word_count >= 3000
-                      ? `Long assignment (~${assignment.word_count.toLocaleString()} words) — this can take 2–4 minutes. We refresh automatically.`
-                      : 'This usually takes 20–60 seconds. We refresh automatically.'}
+                      ? `Long assignment (~${assignment.word_count.toLocaleString()} words) — this can take 2–4 minutes. Please be patient, we refresh automatically.`
+                      : 'This usually takes 20–60 seconds. Please be patient — we refresh automatically.'}
                   </p>
                   <p className="text-[11px] text-muted-foreground mt-3">
                     Safe to leave this page — your draft will be waiting when you come back.
@@ -598,13 +657,17 @@ const AssignmentDetail = () => {
               <CardContent className="space-y-4">
                 {assignment.status === 'draft' && (
                   <>
-                    <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-sm">
+                    <div className={`p-4 rounded-sm border ${paymentAttempts > 0 ? 'bg-orange-50 border-orange-200' : 'bg-yellow-50 border-yellow-200'}`}>
                       <div className="flex items-start gap-2">
-                        <AlertCircle className="w-5 h-5 text-yellow-600 flex-shrink-0 mt-0.5" />
+                        <AlertCircle className={`w-5 h-5 flex-shrink-0 mt-0.5 ${paymentAttempts > 0 ? 'text-orange-600' : 'text-yellow-600'}`} />
                         <div>
-                          <p className="font-medium text-yellow-800">Payment Required</p>
-                          <p className="text-sm text-yellow-700 mt-1">
-                            Complete payment and AI generation will begin automatically.
+                          <p className={`font-medium ${paymentAttempts > 0 ? 'text-orange-800' : 'text-yellow-800'}`}>
+                            {paymentAttempts > 0 ? 'Payment not completed' : 'Payment Required'}
+                          </p>
+                          <p className={`text-sm mt-1 ${paymentAttempts > 0 ? 'text-orange-700' : 'text-yellow-700'}`}>
+                            {paymentAttempts > 0
+                              ? `You've started ${paymentAttempts} checkout${paymentAttempts > 1 ? 's' : ''} but haven't finished. Tap below to try again — you won't be double-charged.`
+                              : 'Complete payment and AI generation will begin automatically.'}
                           </p>
                         </div>
                       </div>
@@ -613,15 +676,20 @@ const AssignmentDetail = () => {
                       className="w-full bg-primary text-primary-foreground hover:bg-primary/90 rounded-sm py-5"
                       onClick={handlePayment}
                       disabled={paying}
-                      data-testid="pay-btn"
+                      data-testid={paymentAttempts > 0 ? 'retry-payment-btn' : 'pay-btn'}
                     >
                       {paying ? (
                         <Loader2 className="w-4 h-4 animate-spin mr-2" />
                       ) : (
                         <CreditCard className="w-4 h-4 mr-2" />
                       )}
-                      Pay ${assignment.final_price}
+                      {paymentAttempts > 0 ? 'Retry Payment' : 'Pay'} ${assignment.final_price}
                     </Button>
+                    {paymentAttempts > 0 && (
+                      <p className="text-[11px] text-muted-foreground text-center">
+                        Stripe froze last time? Try a different browser or disable ad-blockers on checkout.stripe.com.
+                      </p>
+                    )}
                   </>
                 )}
 

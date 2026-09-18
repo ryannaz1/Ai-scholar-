@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { 
   BookOpen, Plus, FileText, Clock, DollarSign, 
   BarChart3, LogOut, Menu, X, ChevronRight,
-  Sparkles, CheckCircle, AlertCircle, ShieldCheck
+  Sparkles, CheckCircle, AlertCircle, ShieldCheck, Settings as SettingsIcon
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
@@ -149,6 +149,16 @@ const Dashboard = () => {
               >
                 <ShieldCheck className="w-5 h-5" strokeWidth={1.5} />
                 Reviewer Inbox
+              </Link>
+            )}
+            {isAdmin && (
+              <Link
+                to="/settings"
+                className="flex items-center gap-3 px-4 py-3 rounded-sm hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors"
+                data-testid="nav-settings"
+              >
+                <SettingsIcon className="w-5 h-5" strokeWidth={1.5} />
+                Settings
               </Link>
             )}
           </nav>

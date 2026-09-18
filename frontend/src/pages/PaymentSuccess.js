@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Link, useSearchParams, useNavigate } from 'react-router-dom';
-import { BookOpen, CheckCircle, Loader2, AlertCircle, ArrowRight } from 'lucide-react';
+import { BookOpen, CheckCircle, Loader2, AlertCircle, ArrowRight, Sparkles } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Card, CardContent } from '../components/ui/card';
+import confetti from 'canvas-confetti';
 import axios from 'axios';
 import { toast } from 'sonner';
 
@@ -15,6 +16,21 @@ const PaymentSuccess = () => {
   const sessionId = searchParams.get('session_id');
   const [status, setStatus] = useState('checking'); // checking, success, error
   const [assignmentId, setAssignmentId] = useState(null);
+  const confettiFiredRef = useRef(false);
+
+  const fireConfetti = () => {
+    if (confettiFiredRef.current) return;
+    confettiFiredRef.current = true;
+    const colors = ['#1a2842', '#c9a961', '#f5f1e8', '#22c55e'];
+    const duration = 2500;
+    const end = Date.now() + duration;
+    (function frame() {
+      confetti({ particleCount: 4, angle: 60, spread: 55, origin: { x: 0 }, colors });
+      confetti({ particleCount: 4, angle: 120, spread: 55, origin: { x: 1 }, colors });
+      if (Date.now() < end) requestAnimationFrame(frame);
+    })();
+    confetti({ particleCount: 140, spread: 100, origin: { y: 0.55 }, colors, scalar: 1.15 });
+  };
 
   useEffect(() => {
     if (sessionId) {
@@ -22,6 +38,7 @@ const PaymentSuccess = () => {
     } else {
       setStatus('error');
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
   const pollPaymentStatus = async (sid, attempts = 0) => {
@@ -39,14 +56,15 @@ const PaymentSuccess = () => {
 
       if (res.data.payment_status === 'paid') {
         setStatus('success');
+        fireConfetti();
         if (res.data.assignment_id) {
           setAssignmentId(res.data.assignment_id);
-          // Auto-redirect after a brief delay so user sees the success state
+          // Give user 4s to enjoy the confetti + confirmation message before redirecting
           setTimeout(() => {
-            navigate(`/assignment/${res.data.assignment_id}`);
-          }, 1500);
+            navigate(`/assignment/${res.data.assignment_id}?paid=1`);
+          }, 4000);
         }
-        toast.success('Payment successful! Generating your content...');
+        toast.success('Payment successful! AI is drafting your assignment now.');
         return;
       }
 
@@ -86,27 +104,33 @@ const PaymentSuccess = () => {
 
             {status === 'success' && (
               <>
-                <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6">
+                <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6 animate-in zoom-in duration-500">
                   <CheckCircle className="w-10 h-10 text-green-600" />
                 </div>
                 <h1 className="text-2xl font-semibold mb-2" style={{ fontFamily: 'Fraunces, serif' }}>
                   Payment Successful!
                 </h1>
-                <p className="text-muted-foreground mb-6">
-                  Your assignment is ready for content generation. Click below to generate your academic writing.
+                <div className="flex items-center justify-center gap-2 mb-3 text-primary">
+                  <Sparkles className="w-4 h-4" />
+                  <p className="text-sm font-medium">AI is now making your assignment</p>
+                  <Sparkles className="w-4 h-4" />
+                </div>
+                <p className="text-muted-foreground mb-6 text-sm">
+                  It'll be ready in a bit — please be patient, quality writing takes a moment.
+                  We're taking you to your assignment page…
                 </p>
                 {assignmentId ? (
-                  <Link to={`/assignment/${assignmentId}`}>
-                    <Button 
+                  <Link to={`/assignment/${assignmentId}?paid=1`}>
+                    <Button
                       className="bg-primary text-primary-foreground hover:bg-primary/90 rounded-sm px-8"
                       data-testid="view-assignment-btn"
                     >
-                      Generate Content <ArrowRight className="ml-2 w-4 h-4" />
+                      Open my assignment <ArrowRight className="ml-2 w-4 h-4" />
                     </Button>
                   </Link>
                 ) : (
                   <Link to="/dashboard">
-                    <Button 
+                    <Button
                       className="bg-primary text-primary-foreground hover:bg-primary/90 rounded-sm px-8"
                       data-testid="go-dashboard-btn"
                     >

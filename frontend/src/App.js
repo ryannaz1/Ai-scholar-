@@ -15,6 +15,7 @@ import RewriteWorkspace from "./pages/RewriteWorkspace";
 import AdminDashboard from "./pages/AdminDashboard";
 import FreeAICheck from "./pages/FreeAICheck";
 import PaymentSuccess from "./pages/PaymentSuccess";
+import Settings from "./pages/Settings";
 
 // Protected Route Component
 const ProtectedRoute = ({ children }) => {
@@ -117,6 +118,14 @@ function App() {
             element={
               <ProtectedRoute>
                 <AdminDashboard />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/settings"
+            element={
+              <ProtectedRoute>
+                <Settings />
               </ProtectedRoute>
             }
           />
