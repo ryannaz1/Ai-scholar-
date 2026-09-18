@@ -144,26 +144,22 @@ def _parse_ai_json(raw: str) -> dict:
 
 
 async def run_generation(assignment_id: str):
+    """Multi-step chained pipeline. Plan → chapter-by-chapter → references → tips.
+    Handles up to ~30k words by decomposing the LLM work across many small calls."""
     try:
         assignment = await db.assignments.find_one({"id": assignment_id}, {"_id": 0})
         if not assignment:
             logger.error(f"Generation: assignment {assignment_id} not found")
             return
 
-        await db.assignments.update_one(
-            {"id": assignment_id},
-            {"$set": {
-                "generation_status": "generating",
-                "generation_error": None,
-                "updated_at": datetime.now(timezone.utc).isoformat(),
-            }},
-        )
+        await _set_progress(assignment_id, step="Starting generation…", pct=1,
+                            gen_status="generating", err=None)
 
+        # Load categorized materials
         materials = await db.course_materials.find(
             {"assignment_id": assignment_id},
             {"_id": 0, "extracted_text": 1, "filename": 1, "category": 1},
         ).to_list(20)
-
         grouped = {"course_material": [], "previous_assignment": [], "requirements": []}
         for m in materials:
             cat = m.get("category") or "course_material"
@@ -171,72 +167,89 @@ async def run_generation(assignment_id: str):
                 cat = "course_material"
             grouped[cat].append(m)
 
-        def section(label, items, char_limit=6000):
+        def section(label, items, cap=6000):
             if not items:
                 return ""
-            blocks = "\n\n".join(f"[{m['filename']}]\n{m['extracted_text'][:char_limit]}" for m in items)
+            blocks = "\n\n".join(f"[{m['filename']}]\n{m['extracted_text'][:cap]}" for m in items)
             return f"\n\n=== {label} ===\n{blocks}"
 
         materials_context = (
             section("ASSIGNMENT BRIEF / REQUIREMENTS DOCS", grouped["requirements"], 8000)
-            + section("COURSE MATERIAL (syllabus, readings, slides)", grouped["course_material"], 6000)
-            + section("STUDENT'S PREVIOUS WORK (use ONLY to match voice/style — never copy)", grouped["previous_assignment"], 4000)
+            + section("COURSE MATERIAL (readings, slides)", grouped["course_material"], 6000)
+            + section("STUDENT'S PREVIOUS WORK (voice only — never copy)", grouped["previous_assignment"], 4000)
         ).strip()
 
-        user_prompt = f"""Assignment Details:
-Title: {assignment['title']}
-Subject: {assignment['subject']}
-Format: {assignment.get('assignment_format', 'general')}
-Citation Style: {assignment.get('citation_style', 'apa').upper()}
-Requirements: {assignment['requirements']}
-Word Count Target: {assignment['word_count']} words (this applies to the DRAFT section only)
-Writing Style: {assignment['writing_style']}
-Additional Notes: {assignment.get('additional_notes', '')}
+        # STEP 1: Plan
+        await _set_progress(assignment_id, step="Planning chapters…", pct=5)
+        plan = await _plan_document(assignment, materials_context)
+        chapters = plan.get("chapters") or []
+        if not chapters:
+            # fallback: 1 chapter covering everything
+            chapters = [{"id": 1, "title": assignment["title"], "target_words": assignment["word_count"], "key_points": []}]
+        outline_md = plan.get("outline_markdown") or _plan_to_markdown(chapters)
+        writing_tips_seed = plan.get("writing_tips_seed", "")
+        total = len(chapters)
+        await _set_progress(assignment_id, step=f"Planned {total} chapter(s)", pct=10,
+                            total_chapters=total, chapters_completed=0)
 
-{format_specific_brief(assignment)}
+        # STEP 2: Chapter-by-chapter writing with context injection
+        chapter_bodies = []
+        chapter_summaries = []
+        for i, chap in enumerate(chapters):
+            start_pct = 10 + int(70 * (i / max(total, 1)))
+            await _set_progress(
+                assignment_id,
+                step=f"Writing chapter {i+1}/{total}: {chap.get('title', '')[:60]}",
+                pct=start_pct,
+                chapters_completed=i,
+            )
+            body, summary = await _write_chapter(assignment, chap, chapter_summaries, materials_context)
+            chapter_bodies.append(body)
+            chapter_summaries.append(summary or f"Chapter {i+1}: {chap.get('title','')}")
+            await _set_progress(
+                assignment_id,
+                pct=10 + int(70 * ((i + 1) / max(total, 1))),
+                chapters_completed=i + 1,
+            )
 
-{materials_context if materials_context else "No supplemental materials provided."}
+        # STEP 3: Compile references
+        await _set_progress(assignment_id, step="Compiling references…", pct=85)
+        references_md = await _compile_references(assignment, chapter_bodies)
 
-Produce the JSON object with the three required keys (outline, draft, writing_tips).
-The DRAFT must be approximately {assignment['word_count']} words with Cover Page block, Table of Contents, in-text citations in {assignment.get('citation_style', 'apa').upper()} style, References, and Appendix.
-Remember: this is a LEARNING REFERENCE. Encourage the student's own voice in writing_tips."""
+        # STEP 4: Writing tips
+        await _set_progress(assignment_id, step="Finalizing writing tips…", pct=92)
+        writing_tips = await _write_tips(assignment, outline_md, writing_tips_seed, chapter_summaries)
 
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
-        from core import resolve_model
-        provider, model_name = resolve_model(assignment.get("ai_model"))
-        api_key = os.environ.get("EMERGENT_LLM_KEY")
-        chat = LlmChat(
-            api_key=api_key,
-            session_id=f"assignment-{assignment_id}",
-            system_message=ETHICAL_SYSTEM_MESSAGE,
-        ).with_model(provider, model_name)
-
-        response = await chat.send_message(UserMessage(text=user_prompt))
-        parsed = _parse_ai_json(response)
-
-        outline = parsed.get("outline", "").strip()
-        draft = parsed.get("draft", "").strip()
-        writing_tips = parsed.get("writing_tips", "").strip()
-
-        if not (outline or draft or writing_tips):
-            draft = response or ""
-
-        combined = f"# Outline\n\n{outline}\n\n# Draft\n\n{draft}\n\n# Writing Tips\n\n{writing_tips}"
+        # STEP 5: Assemble
+        cover = _make_cover_page(assignment, plan.get("title") or assignment["title"])
+        toc = _make_toc(chapters)
+        appendix = _make_appendix(assignment)
+        full_draft = "\n\n".join([cover, toc, *chapter_bodies, references_md, appendix])
+        combined = f"# Outline\n\n{outline_md}\n\n# Draft\n\n{full_draft}\n\n# Writing Tips\n\n{writing_tips}"
 
         await db.assignments.update_one(
             {"id": assignment_id},
             {"$set": {
-                "outline": outline,
-                "draft": draft,
+                "outline": outline_md,
+                "draft": full_draft,
                 "writing_tips": writing_tips,
                 "generated_content": combined,
                 "status": "completed",
                 "generation_status": "completed",
+                "generation_progress": 100,
+                "generation_step": "Complete",
                 "generation_error": None,
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }},
         )
-        logger.info(f"Generation complete for assignment {assignment_id}")
+        logger.info(f"Chained generation complete for {assignment_id} ({total} chapters)")
+
+        # STEP 6: Notify user their doc is ready
+        try:
+            from routers.payments import send_assignment_ready_email
+            await send_assignment_ready_email(assignment_id)
+        except Exception as e:
+            logger.warning(f"Ready email skipped for {assignment_id}: {e}")
 
     except Exception as e:
         logger.exception(f"Generation failed for {assignment_id}: {e}")
@@ -244,10 +257,252 @@ Remember: this is a LEARNING REFERENCE. Encourage the student's own voice in wri
             {"id": assignment_id},
             {"$set": {
                 "generation_status": "failed",
+                "generation_step": "Failed",
                 "generation_error": str(e)[:500],
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }},
         )
+
+
+# ---------- Chained pipeline helpers ----------
+
+PLANNER_SYSTEM = """You are AIScholar's planning phase. Given an assignment brief, produce a chapter-by-chapter plan for a long-form academic document.
+
+Return ONLY a JSON object (no markdown fences) with this shape:
+{
+  "title": "<refined title>",
+  "total_word_target": <int>,
+  "chapters": [
+    {"id": 1, "title": "<meaningful chapter title>", "target_words": <int>, "key_points": ["point 1", "point 2"], "notes": "any specific structural guidance"}
+  ],
+  "outline_markdown": "<full hierarchical outline as markdown ready to display>",
+  "writing_tips_seed": "3-5 short bullets on how the student should approach this"
+}
+
+Split the total word target across chapters proportionally, respecting the assignment_format:
+- <2000 words: 2-4 chapters
+- 2000-6000 words: 4-7 chapters
+- 6000-15000 words: 7-10 chapters
+- 15000+ words: 10-14 chapters
+
+Chapter titles must be substantive, not generic ("Chapter 2"). Use the citation style, subject, and format conventions provided."""
+
+
+CHAPTER_WRITER_SYSTEM = """You are AIScholar's chapter writer. You are writing ONE chapter of a longer academic reference draft. The goal is to give the student a strong learning scaffold — well-structured, cited, coherent — that they will rewrite in their own voice.
+
+Return ONLY a JSON object (no markdown fences):
+{
+  "body": "<chapter markdown, starting with `## <chapter title>` heading, ~target_words long, in the requested citation style with placeholder in-text citations>",
+  "summary": "<2-3 sentence recap of what this chapter argued/covered, for the next chapter's context>"
+}
+
+RULES:
+- Hit the target word count within ±15%
+- Include realistic in-text citations in the requested style (APA/MLA/Harvard/Chicago/IEEE) — placeholder authors OK
+- Do NOT re-do the cover page, TOC, references or appendix — those are compiled separately
+- Do NOT start with "In this chapter, we will..." — write substantively from sentence one
+- Maintain narrative cohesion with the previous chapter summaries provided"""
+
+
+REFERENCES_SYSTEM = """You are AIScholar's citation compiler. Given the full chapter bodies of a reference draft, produce a complete References section in the requested citation style.
+
+Return ONLY the markdown for the References section — start with the appropriate heading (`## References` for APA/Harvard, `## Works Cited` for MLA, `## Bibliography` for Chicago, `## References` for IEEE).
+
+- 8-15 realistic scholarly entries (peer-reviewed articles, books, conference papers)
+- Consistent formatting per the requested style
+- Cover the topics discussed in the chapters
+- No commentary before or after the list"""
+
+
+TIPS_SYSTEM = """You are AIScholar's writing coach. Given an outline, brief tips seed, and chapter recaps, produce final actionable "Writing Tips" for the student to make this their own.
+
+Return ONLY the markdown for the writing tips section (no JSON, no fences). Cover:
+- How to make the draft personal (their voice)
+- Research directions to deepen the argument
+- Common mistakes for this subject/format
+- Citation-style-specific guidance
+- Practical revision workflow
+
+Keep it focused — 400-700 words of concrete advice, not platitudes."""
+
+
+async def _llm_call(assignment: dict, system_message: str, user_prompt: str, session_suffix: str) -> str:
+    from emergentintegrations.llm.chat import LlmChat, UserMessage
+    from core import resolve_model
+    provider, model_name = resolve_model(assignment.get("ai_model"))
+    api_key = os.environ.get("EMERGENT_LLM_KEY")
+    chat = LlmChat(
+        api_key=api_key,
+        session_id=f"aischolar-{assignment['id']}-{session_suffix}-{uuid.uuid4().hex[:6]}",
+        system_message=system_message,
+    ).with_model(provider, model_name)
+    return await chat.send_message(UserMessage(text=user_prompt))
+
+
+async def _plan_document(assignment: dict, materials_context: str) -> dict:
+    user_prompt = f"""Assignment Details:
+Title: {assignment['title']}
+Subject: {assignment['subject']}
+Format: {assignment.get('assignment_format', 'general')}
+Citation Style: {assignment.get('citation_style', 'apa').upper()}
+Requirements: {assignment['requirements']}
+Total Word Count Target: {assignment['word_count']} words
+Writing Style: {assignment['writing_style']}
+Additional Notes: {assignment.get('additional_notes', '')}
+
+{format_specific_brief(assignment)}
+
+{materials_context[:15000] if materials_context else 'No supplemental materials.'}
+
+Produce the JSON plan. Split {assignment['word_count']} words across chapters proportionally."""
+    raw = await _llm_call(assignment, PLANNER_SYSTEM, user_prompt, "plan")
+    return _parse_ai_json(raw) or {}
+
+
+async def _write_chapter(assignment: dict, chapter_spec: dict, prev_summaries: list, materials_context: str) -> tuple:
+    prev_block = "\n".join(f"- Ch {i+1} recap: {s}" for i, s in enumerate(prev_summaries[-8:])) or "(this is the first chapter)"
+    key_points = "\n".join(f"  • {kp}" for kp in (chapter_spec.get("key_points") or []))
+    user_prompt = f"""Assignment: {assignment['title']}
+Subject: {assignment['subject']}
+Format: {assignment.get('assignment_format', 'general')}
+Citation Style: {assignment.get('citation_style', 'apa').upper()}
+Writing Style: {assignment['writing_style']}
+
+CHAPTER TO WRITE:
+Chapter {chapter_spec.get('id')}: {chapter_spec.get('title')}
+Target words: {chapter_spec.get('target_words', 500)}
+Key points to cover:
+{key_points or '  (open — use your judgment based on chapter title)'}
+Structural notes: {chapter_spec.get('notes', '')}
+
+PREVIOUS CHAPTER RECAPS (for continuity):
+{prev_block}
+
+RELEVANT SOURCE MATERIAL (excerpts):
+{materials_context[:8000] if materials_context else '(none provided)'}
+
+Write this chapter now. Return the JSON with `body` and `summary` keys."""
+    raw = await _llm_call(assignment, CHAPTER_WRITER_SYSTEM, user_prompt, f"ch{chapter_spec.get('id', 'x')}")
+    parsed = _parse_ai_json(raw) or {}
+    body = (parsed.get("body") or "").strip()
+    summary = (parsed.get("summary") or "").strip()
+    if not body:
+        # fallback: use raw response as body
+        body = raw.strip() if isinstance(raw, str) else ""
+    if not body.startswith("#"):
+        body = f"## {chapter_spec.get('title', 'Chapter')}\n\n{body}"
+    return body, summary
+
+
+async def _compile_references(assignment: dict, chapter_bodies: list) -> str:
+    joined = "\n\n".join(chapter_bodies)[:30000]
+    user_prompt = f"""Citation Style: {assignment.get('citation_style', 'apa').upper()}
+Subject: {assignment['subject']}
+Title: {assignment['title']}
+
+Chapter contents (for topic reference):
+{joined}
+
+Produce the References section in the {assignment.get('citation_style', 'apa').upper()} style."""
+    raw = await _llm_call(assignment, REFERENCES_SYSTEM, user_prompt, "refs")
+    text = (raw or "").strip()
+    # Strip accidental fences
+    text = re.sub(r"^```(?:markdown|md)?\s*|\s*```$", "", text, flags=re.MULTILINE)
+    if not text.lstrip().startswith("#"):
+        text = f"## References\n\n{text}"
+    return text
+
+
+async def _write_tips(assignment: dict, outline_md: str, seed: str, chapter_summaries: list) -> str:
+    summaries_block = "\n".join(f"- Ch {i+1}: {s}" for i, s in enumerate(chapter_summaries[:12]))
+    user_prompt = f"""Assignment: {assignment['title']}
+Subject: {assignment['subject']}
+Format: {assignment.get('assignment_format', 'general')}
+Citation Style: {assignment.get('citation_style', 'apa').upper()}
+
+Outline (compact):
+{outline_md[:4000]}
+
+Chapter recaps:
+{summaries_block}
+
+Planner's seed advice: {seed}
+
+Write the final writing tips section."""
+    raw = await _llm_call(assignment, TIPS_SYSTEM, user_prompt, "tips")
+    text = (raw or "").strip()
+    text = re.sub(r"^```(?:markdown|md)?\s*|\s*```$", "", text, flags=re.MULTILINE)
+    return text
+
+
+async def _set_progress(assignment_id: str, step: str = None, pct: int = None,
+                        total_chapters: int = None, chapters_completed: int = None,
+                        gen_status: str = None, err=""):
+    update = {"updated_at": datetime.now(timezone.utc).isoformat()}
+    if step is not None:
+        update["generation_step"] = step
+    if pct is not None:
+        update["generation_progress"] = max(0, min(100, int(pct)))
+    if total_chapters is not None:
+        update["total_chapters"] = int(total_chapters)
+    if chapters_completed is not None:
+        update["chapters_completed"] = int(chapters_completed)
+    if gen_status is not None:
+        update["generation_status"] = gen_status
+    if err == "" and gen_status is None:
+        pass
+    elif err is None:
+        update["generation_error"] = None
+    await db.assignments.update_one({"id": assignment_id}, {"$set": update})
+
+
+def _plan_to_markdown(chapters: list) -> str:
+    lines = ["## Document Outline\n"]
+    for c in chapters:
+        lines.append(f"### Chapter {c.get('id')}: {c.get('title')}  \n_Target: {c.get('target_words')} words_")
+        for kp in (c.get("key_points") or []):
+            lines.append(f"- {kp}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _make_cover_page(assignment: dict, title: str) -> str:
+    return (
+        f"# {title}\n\n"
+        f"**Student:** [Your Name]  \n"
+        f"**Course:** [Course Code – Course Name]  \n"
+        f"**Instructor:** [Instructor Name]  \n"
+        f"**Date:** [Submission Date]  \n"
+        f"**Word count target:** {assignment.get('word_count', 0):,} words  \n"
+        f"**Citation style:** {assignment.get('citation_style', 'apa').upper()}\n\n"
+        f"---\n"
+    )
+
+
+def _make_toc(chapters: list) -> str:
+    lines = ["## Table of Contents\n"]
+    for c in chapters:
+        lines.append(f"{c.get('id')}. {c.get('title')} — _p. X_")
+    lines.append("- References — _p. X_")
+    lines.append("- Appendix A — _p. X_\n")
+    return "\n".join(lines)
+
+
+def _make_appendix(assignment: dict) -> str:
+    subject = assignment.get("subject", "your topic")
+    fmt = assignment.get("assignment_format", "general")
+    hint = {
+        "lab_report": "raw data tables, calibration curves, or reagent lists",
+        "case_study": "interview transcripts, org charts, or supplementary evidence",
+        "literature_review": "search-string logs, PRISMA diagram, or excluded-paper table",
+        "concert_report": "program notes, ticket stub scan, or listening chronology",
+        "masters_thesis": "interview schedules, consent forms, or coding frames",
+        "dissertation": "interview schedules, ethics approval, or full-length data tables",
+    }.get(fmt, f"supplementary material relevant to {subject}")
+    return (
+        "## Appendix A\n\n"
+        f"_[Placeholder — insert {hint} here. Customize based on your specific work.]_\n"
+    )
 
 
 async def trigger_generation_if_needed(assignment_id: str, background_tasks: BackgroundTasks):

@@ -1,101 +1,70 @@
 # AIScholar — Product Requirements
 
 ## Original problem statement
-Build an app that does assignments for students. $7/280 words, 10% off ≥10k words.
-User pivoted → "ethical but same idea". Delivered as **AIScholar** — AI-powered academic writing assistant that produces outlines, reference drafts, and writing tips (NOT submission-ready work).
+Build an app that does assignments for students. $7/280 words, 10% off ≥10k words. Ethical pivot → **AIScholar**, AI-powered academic writing assistant.
 
 ## What's implemented (Feb 2026)
 
-### Core
-- **Auth**: JWT register/login (with optional referral_code), admin flag by OWNER_EMAIL
-- **Assignment flow**: 8 formats, citation styles (APA/MLA/Harvard/Chicago/IEEE/none), categorized uploads via Emergent Object Storage
-- **AI generation**: Async pipeline, choice of GPT-5.2 / GPT-5.4 Mini / Claude Sonnet 4.6, enforced Cover Page / TOC / References / Appendix
-- **Regeneration**: 2 free per section, then $5 Stripe paywall
-- **Rewrite Workspace** + real-time AI-tells detection
-- **Manual AI Check**: Originality.ai ($10) / Turnitin ($15) — routed to admin reviewer
+### Chained AI Generation (NEW — replaces single-shot)
+Multi-step pipeline scales to 10,000+ words by decomposing the LLM work:
+1. **Plan** — 1 API call → returns chapter list `[{id, title, target_words, key_points}]` + outline markdown + writing-tips seed
+2. **Write chapters** — 1 API call per chapter, injecting previous chapter summaries for narrative cohesion
+3. **Compile references** — 1 API call over the full compiled body, styled per the assignment's citation style
+4. **Finalize tips** — 1 API call synthesising the outline + chapter recaps
+5. **Assemble** — deterministic markdown: Cover page + TOC + Chapters + References + Appendix
+6. **Notify** — Resend "your assignment is ready" email (idempotent via `ready_email_sent`)
 
-### Payments
-- Stripe checkout with dynamic pricing + 10% bulk discount
-- Webhook fulfillment
-- **Retry-payment** UI with prior-attempt counter
-- **Credits** auto-applied at checkout (leaves $0.50 min charge, ledger recorded)
+Progress fields (`generation_progress` 0-100, `generation_step`, `total_chapters`, `chapters_completed`) power a live progress bar on the assignment page (polling every 4s).
 
-### Referrals (NEW)
-- Every user gets a shareable link `/register?ref={user_id}`
-- Referred user + referrer each earn $5 credit when the referred user completes their first paid order
-- Dashboard shows referral card: invited count, paid conversions, credit balance, copy-link button
-- Register page shows "$5 credit" banner when arriving via referral link
-
-### Assignment Templates
-- One-click **Duplicate assignment** (from Dashboard row + AssignmentDetail sidebar) — copies all fields, resets status to draft, no content/materials
-
-### Admin
-- Reviewer inbox for AI check orders
-- Settings page (Resend sender email + **Send test email** button)
-- Order confirmation email fires on successful payment
-- Report-ready email fires when reviewer completes an AI check
-
-### Post-payment UX
-- Confetti animation + "AI is drafting, please be patient" banner on assignment page
-- Order confirmation email
-
-### Public
-- Free public AI Check (5/day/IP rate-limited)
+### Everything else already shipped
+- Auth (JWT + referral_code), 8 assignment formats, categorized uploads, dynamic Stripe pricing with 10% bulk discount, retry-payment UI, credits application, **duplicate assignment**, **referral bonuses** ($5 both sides), AI model picker (GPT-5.2 / GPT-5.4 Mini / Claude Sonnet 4.6), per-section regenerate (2 free + $5), Rewrite Workspace, manual AI checks (Originality $10 / Turnitin $15), admin reviewer inbox, order-confirmation + report-ready + assignment-ready emails, Settings page with **test-send** button, free public AI check.
 
 ## Architecture
 ```
 /app/backend/
-├── core.py                 # config, db, models, auth, pricing, storage, credits, referrals, AI_MODELS
+├── core.py                 # config, db, models (progress fields), auth, pricing, storage, credits, referrals, AI_MODELS
 ├── server.py               # thin FastAPI bootstrap
 └── routers/
-    ├── auth.py             # /api/auth/* (register accepts referral_code)
+    ├── auth.py             # /api/auth/* (referral_code aware)
     ├── pricing.py
-    ├── assignments.py      # CRUD, upload, regenerate, /duplicate
-    ├── generation.py       # AI background tasks (uses assignment.ai_model)
-    ├── payments.py         # checkout (credits applied), webhook, confirmation email, referral bonus
-    ├── ai_check.py         # AI-check orders + admin actions
-    ├── references.py       # CrossRef + free public AI check
+    ├── assignments.py      # CRUD, upload, regenerate, duplicate
+    ├── generation.py       # CHAINED PIPELINE: plan → chapters → refs → tips → assemble → email
+    ├── payments.py         # checkout, webhook, confirmation + ready emails
+    ├── ai_check.py
+    ├── references.py
     ├── stats.py
-    ├── settings.py         # /api/settings/resend + /api/settings/resend/test
+    ├── settings.py         # sender email + test-send
     └── user.py             # /api/user/referral
-```
-```
-/app/frontend/src/pages/
-├── LandingPage, AuthPage (referral-aware), Dashboard (referral card + duplicate), NewAssignment (model picker)
-├── AssignmentDetail (retry-payment, confetti, duplicate), RewriteWorkspace, AdminDashboard
-├── FreeAICheck, PaymentSuccess (confetti + patient copy)
-└── Settings (Resend sender + test-send)
 ```
 
 ## Backlog / Roadmap
-
 ### P1
-- Resend domain verification (still test mode → student emails restricted)
-- Frontend model badge on assignment detail (show which model was used)
+- Resend domain verification (manual step in resend.com; test-send button lets user validate DNS in 1s)
+- Frontend: show AI model badge on assignment detail
+- Frontend: show completed chapters as expanded accordion during generation (currently only progress bar)
 
 ### P2
-- Regression tests for credits + referrals in `/app/backend/tests/`
-- Email templates: personalize sender name, unsubscribe footer
+- Regression tests under `/app/backend/tests/`
+- Celery/Redis worker if we ever need to survive backend restarts mid-generation (current: FastAPI BackgroundTasks — task dies if pod restarts)
 
 ## Third-party integrations
-- **OpenAI GPT-5.2 / GPT-5.4 Mini** + **Claude Sonnet 4.6** via Emergent LLM Key
+- **OpenAI GPT-5.2, GPT-5.4 Mini** + **Claude Sonnet 4.6** via Emergent LLM Key
 - **Stripe** (test key preloaded)
-- **Resend** (API key + configurable sender via Settings)
+- **Resend** (API key + configurable sender)
 - **Emergent Object Storage**
 - **CrossRef**
 
 ## Key endpoints
-- `POST /api/auth/register` — accepts `referral_code`
+- `POST /api/auth/register` (accepts `referral_code`)
 - `POST /api/assignments/{id}/duplicate`
-- `GET  /api/user/referral` — returns code, credits, referred count
-- `GET|PUT /api/settings/resend`
-- `POST /api/settings/resend/test`
+- `GET  /api/user/referral`
+- `GET|PUT /api/settings/resend` + `POST /api/settings/resend/test`
 - `GET  /api/payments/attempts/{id}`
-- Assignment payload now includes `ai_model`
+- `POST /api/assignments/{id}/generate` triggers chained pipeline
 
 ## Notes for future agents
-- `server.py` is a **bootstrap only** — never re-add route logic there
-- New model support: extend `AI_MODELS` in `core.py` (dict of id → {provider, model, label, description})
-- Referral bonus is idempotent via `users.referral_bonus_paid` flag
-- Credits are applied at checkout time; deducted only when payment confirms
-- `test_credentials.md` has admin creds; do NOT overwrite unless auth changes
+- Chained pipeline lives entirely in `routers/generation.py` — helpers prefixed `_` (`_plan_document`, `_write_chapter`, `_compile_references`, `_write_tips`, `_llm_call`, `_set_progress`, `_make_cover_page`, `_make_toc`, `_make_appendix`)
+- To change how the doc is chunked, edit `PLANNER_SYSTEM` in `generation.py`
+- Chapter context injection uses `chapter_summaries[-8:]` — expand if you need longer memory
+- Ready email requires `APP_PUBLIC_URL` env var for the deep link; falls back to Order ID text otherwise
+- `test_credentials.md` has admin creds

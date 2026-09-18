@@ -466,11 +466,21 @@ const AssignmentDetail = () => {
                   <h3 className="text-lg font-semibold mb-1" style={{ fontFamily: 'Fraunces, serif' }}>
                     Your assignment is being made by AI…
                   </h3>
-                  <p className="text-sm text-muted-foreground">
-                    {assignment.word_count >= 3000
-                      ? `Long assignment (~${assignment.word_count.toLocaleString()} words) — this can take 2–4 minutes. Please be patient, we refresh automatically.`
-                      : 'This usually takes 20–60 seconds. Please be patient — we refresh automatically.'}
+                  <p className="text-sm text-muted-foreground mb-4">
+                    {assignment.generation_step || (assignment.word_count >= 3000
+                      ? `Long assignment (~${assignment.word_count.toLocaleString()} words) — this can take a few minutes. Please be patient, we refresh automatically.`
+                      : 'This usually takes 20–60 seconds. Please be patient — we refresh automatically.')}
                   </p>
+                  {typeof assignment.generation_progress === 'number' && assignment.generation_progress > 0 && (
+                    <div className="max-w-md mx-auto">
+                      <div className="w-full h-2 rounded-full bg-primary/10 overflow-hidden" data-testid="gen-progress-bar-main">
+                        <div className="h-full bg-primary transition-all duration-500" style={{ width: `${assignment.generation_progress}%` }} />
+                      </div>
+                      <p className="text-[11px] text-muted-foreground mt-1 font-mono">
+                        {assignment.generation_progress}%{assignment.total_chapters ? ` · chapter ${assignment.chapters_completed || 0}/${assignment.total_chapters}` : ''}
+                      </p>
+                    </div>
+                  )}
                   <p className="text-[11px] text-muted-foreground mt-3">
                     Safe to leave this page — your draft will be waiting when you come back.
                   </p>
@@ -738,8 +748,18 @@ const AssignmentDetail = () => {
                       <div>
                         <p className="font-medium text-purple-800">Generating…</p>
                         <p className="text-sm text-purple-700 mt-1">
-                          Hang tight — this page refreshes automatically.
+                          {assignment.generation_step || 'Hang tight — this page refreshes automatically.'}
                         </p>
+                        {typeof assignment.generation_progress === 'number' && assignment.generation_progress > 0 && (
+                          <div className="mt-3">
+                            <div className="w-full h-2 rounded-full bg-purple-200 overflow-hidden" data-testid="gen-progress-bar">
+                              <div className="h-full bg-purple-600 transition-all duration-500" style={{ width: `${assignment.generation_progress}%` }} />
+                            </div>
+                            <p className="text-[11px] text-purple-800 mt-1 font-mono">
+                              {assignment.generation_progress}%{assignment.total_chapters ? ` · chapter ${assignment.chapters_completed || 0}/${assignment.total_chapters}` : ''}
+                            </p>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>

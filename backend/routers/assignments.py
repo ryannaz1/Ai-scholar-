@@ -55,6 +55,10 @@ async def create_assignment(data: AssignmentCreate, user: dict = Depends(get_cur
         "draft_regens": 0,
         "writing_tips_regens": 0,
         "course_materials": [],
+        "generation_progress": 0,
+        "generation_step": None,
+        "total_chapters": 0,
+        "chapters_completed": 0,
         "created_at": now,
         "updated_at": now,
     }
@@ -115,6 +119,10 @@ async def duplicate_assignment(assignment_id: str, user: dict = Depends(get_curr
         "draft_regens": 0,
         "writing_tips_regens": 0,
         "course_materials": [],
+        "generation_progress": 0,
+        "generation_step": None,
+        "total_chapters": 0,
+        "chapters_completed": 0,
         "created_at": now,
         "updated_at": now,
     }

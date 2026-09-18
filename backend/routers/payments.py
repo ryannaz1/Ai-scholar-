@@ -17,7 +17,6 @@ router = APIRouter(prefix="/api")
 
 
 async def send_order_confirmation_email(assignment_id: str):
-    """Send order confirmation to the student after successful payment."""
     try:
         assignment = await db.assignments.find_one({"id": assignment_id}, {"_id": 0})
         if not assignment:
@@ -51,8 +50,8 @@ async def send_order_confirmation_email(assignment_id: str):
             <tr><td style="padding:10px; background:#f5f1e8;"><b>Amount paid</b></td><td style="padding:10px; background:#f5f1e8;">${price:.2f} USD</td></tr>
             <tr><td style="padding:10px;"><b>Order ID</b></td><td style="padding:10px; font-family: monospace;">{assignment_id[:8]}</td></tr>
           </table>
-          <p><b>What's next?</b> Our AI is drafting your outline, reference draft, and writing tips right now. Longer assignments can take a few minutes — you'll see everything in your dashboard as soon as it's ready.</p>
-          <p style="margin-top: 24px;">Please be patient — quality writing takes a moment. You can safely close this page and come back later.</p>
+          <p><b>What's next?</b> Our AI is drafting your outline, chapters, references, and writing tips right now. Longer assignments are built chapter-by-chapter for cohesion — you'll see live progress in your dashboard and get another email the moment it's ready.</p>
+          <p style="margin-top: 24px;">Please be patient — quality writing takes a moment.</p>
           <p style="color: #666; font-size: 12px; margin-top: 32px; border-top: 1px solid #ddd; padding-top: 12px;">
             — The AIScholar Team<br/>
             <i>Remember: AIScholar materials are learning references. Always write your final version in your own voice.</i>
@@ -69,6 +68,51 @@ async def send_order_confirmation_email(assignment_id: str):
         logger.info(f"Order confirmation sent for assignment {assignment_id}: {email}")
     except Exception as e:
         logger.exception(f"Failed to send confirmation email for {assignment_id}: {e}")
+
+
+async def send_assignment_ready_email(assignment_id: str):
+    """Notify the student that their generated document is ready to view."""
+    try:
+        assignment = await db.assignments.find_one({"id": assignment_id}, {"_id": 0})
+        if not assignment or assignment.get("ready_email_sent"):
+            return
+        user = await db.users.find_one({"id": assignment["user_id"]}, {"_id": 0})
+        if not user:
+            return
+        api_key = os.environ.get("RESEND_API_KEY", "")
+        if not api_key or api_key.startswith("re_placeholder"):
+            return
+        resend.api_key = api_key
+        sender = await get_sender_email()
+
+        title = assignment.get("title", "Your assignment")
+        total_chapters = assignment.get("total_chapters") or 0
+        origin = os.environ.get("APP_PUBLIC_URL", "").rstrip("/")
+        link_html = f'<a href="{origin}/assignment/{assignment_id}" style="color:#1a2842;font-weight:600;">Open your assignment →</a>' if origin else f"Order ID: <code>{assignment_id[:8]}</code>"
+
+        html = f"""
+        <div style="font-family: Georgia, serif; max-width: 600px; margin: 0 auto; color: #1a2842;">
+          <h2 style="color: #1a2842; border-bottom: 2px solid #1a2842; padding-bottom: 8px;">Your assignment is ready ✓</h2>
+          <p>Hi {user.get('name','there')},</p>
+          <p>Your AI-generated learning materials for <b>{title}</b> are ready to view.</p>
+          <p>We built the draft chapter-by-chapter{f' ({total_chapters} chapters)' if total_chapters else ''} for cohesion, compiled a References section, and included personalised writing tips.</p>
+          <p style="margin: 24px 0; font-size: 15px;">{link_html}</p>
+          <p style="color: #666; font-size: 12px; margin-top: 24px; border-top: 1px solid #ddd; padding-top: 12px;">
+            <i>Reminder: use this as a learning reference. Write your final version in your own voice — the Rewrite Workspace helps you spot AI-tells and rephrase them.</i>
+          </p>
+        </div>
+        """
+        params = {
+            "from": sender,
+            "to": [user["email"]],
+            "subject": f"Your assignment is ready — {title[:60]}",
+            "html": html,
+        }
+        await asyncio.to_thread(resend.Emails.send, params)
+        await db.assignments.update_one({"id": assignment_id}, {"$set": {"ready_email_sent": True}})
+        logger.info(f"Ready email sent for assignment {assignment_id}")
+    except Exception as e:
+        logger.exception(f"Failed sending ready email for {assignment_id}: {e}")
 
 
 @router.post("/payments/checkout", response_model=CheckoutResponse)

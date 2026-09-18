@@ -166,6 +166,11 @@ class AssignmentResponse(BaseModel):
     draft_previous: Optional[str] = None
     writing_tips_previous: Optional[str] = None
     course_materials: List[str] = []
+    # Multi-step generation progress
+    generation_progress: Optional[int] = 0
+    generation_step: Optional[str] = None
+    total_chapters: Optional[int] = 0
+    chapters_completed: Optional[int] = 0
     created_at: str
     updated_at: str
 
